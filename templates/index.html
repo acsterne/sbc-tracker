@@ -1,0 +1,134 @@
+{% extends "base.html" %}
+{% block title %}SBC Tracker — Leaderboard{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1>Stock-Based Compensation Tracker</h1>
+    <p>How much are public tech companies diluting shareholders via SBC — and are they earning it?</p>
+</div>
+
+<!-- Summary cards -->
+<div class="metric-row">
+    <div class="card">
+        <div class="card-label">Companies Tracked</div>
+        <div class="card-value">{{ summary.company_count or "—" }}</div>
+    </div>
+    <div class="card">
+        <div class="card-label">Total SBC (latest year)</div>
+        <div class="card-value">{{ summary.total_sbc | compact }}</div>
+    </div>
+    <div class="card">
+        <div class="card-label">Avg SBC % of Revenue</div>
+        <div class="card-value">{{ summary.avg_sbc_pct_rev | pct }}</div>
+    </div>
+    <div class="card">
+        <div class="card-label">Data Source</div>
+        <div class="card-value" style="font-size:14px;padding-top:4px;color:var(--muted)">SEC EDGAR (2009–present)</div>
+    </div>
+</div>
+
+<!-- Filters -->
+<div class="filter-bar">
+    <form method="get" style="display:flex;gap:12px;flex-wrap:wrap;align-items:center;">
+        <input type="hidden" name="sort" value="{{ sort }}">
+        <input type="hidden" name="order" value="{{ order }}">
+
+        <select name="year" onchange="this.form.submit()">
+            <option value="">Latest year (per company)</option>
+            {% for y in available_years %}
+            <option value="{{ y }}" {% if year|string == y|string %}selected{% endif %}>{{ y }}</option>
+            {% endfor %}
+        </select>
+
+        <select name="sector" onchange="this.form.submit()">
+            <option value="">All sectors</option>
+            {% for s in available_sectors %}
+            <option value="{{ s }}" {% if sector == s %}selected{% endif %}>{{ s }}</option>
+            {% endfor %}
+        </select>
+
+        {% if year or sector %}
+        <a href="/" style="color:var(--muted);font-size:12px;">Clear filters</a>
+        {% endif %}
+    </form>
+    <a href="/scatter" style="margin-left:auto;color:var(--accent);font-size:13px;font-weight:500;">
+        View SBC vs Growth scatter →
+    </a>
+</div>
+
+<!-- Leaderboard table -->
+<div class="table-wrap">
+<table>
+    <thead>
+        <tr>
+            {% macro sort_header(col, label) %}
+                {% set next_order = 'asc' if (sort == col and order == 'desc') else 'desc' %}
+                <th>
+                    <a href="?sort={{ col }}&order={{ next_order }}&year={{ year }}&sector={{ sector }}"
+                       class="{% if sort == col %}sort-{{ order }}{% endif %}">
+                        {{ label }}
+                    </a>
+                </th>
+            {% endmacro %}
+            {{ sort_header('ticker', 'Ticker') }}
+            {{ sort_header('name', 'Company') }}
+            {{ sort_header('sector', 'Sector') }}
+            {{ sort_header('fiscal_year', 'Year') }}
+            {{ sort_header('sbc_annual', 'SBC ($)') }}
+            {{ sort_header('revenue_annual', 'Revenue ($)') }}
+            {{ sort_header('sbc_pct_revenue', 'SBC % Rev') }}
+            {{ sort_header('sbc_pct_gross_profit', 'SBC % GP') }}
+            {{ sort_header('revenue_growth_yoy', 'Rev Growth') }}
+            {{ sort_header('buyback_spend_annual', 'Buybacks ($)') }}
+            {{ sort_header('net_dilution_pct', 'Buyback % Shares') }}
+        </tr>
+    </thead>
+    <tbody>
+        {% for r in rows %}
+        <tr>
+            <td><a href="/company/{{ r.ticker }}" style="font-weight:600;color:var(--text);">{{ r.ticker }}</a></td>
+            <td><a href="/company/{{ r.ticker }}">{{ r.name }}</a></td>
+            <td><span class="badge badge-sector">{{ r.sector }}</span></td>
+            <td class="num" style="color:var(--muted)">{{ r.fiscal_year }}</td>
+            <td class="num">{{ r.sbc_annual | compact }}</td>
+            <td class="num">{{ r.revenue_annual | compact }}</td>
+            <td class="num
+                {% if r.sbc_pct_revenue and r.sbc_pct_revenue > 15 %}sbc-high
+                {% elif r.sbc_pct_revenue and r.sbc_pct_revenue > 7 %}sbc-med
+                {% elif r.sbc_pct_revenue %}sbc-low{% endif %}">
+                {{ r.sbc_pct_revenue | pct }}
+            </td>
+            <td class="num
+                {% if r.sbc_pct_gross_profit and r.sbc_pct_gross_profit > 20 %}sbc-high
+                {% elif r.sbc_pct_gross_profit and r.sbc_pct_gross_profit > 10 %}sbc-med
+                {% elif r.sbc_pct_gross_profit %}sbc-low{% endif %}">
+                {{ r.sbc_pct_gross_profit | pct }}
+            </td>
+            <td class="num
+                {% if r.revenue_growth_yoy and r.revenue_growth_yoy > 25 %}growth-high
+                {% elif r.revenue_growth_yoy and r.revenue_growth_yoy > 10 %}growth-med
+                {% else %}growth-low{% endif %}">
+                {{ r.revenue_growth_yoy | pct }}
+            </td>
+            <td class="num">{{ r.buyback_spend_annual | compact }}</td>
+            <td class="num">{{ r.net_dilution_pct | pct }}</td>
+        </tr>
+        {% else %}
+        <tr><td colspan="11" style="text-align:center;color:var(--muted);padding:32px;">
+            No data yet. Run <code>python3 fetch_sbc.py</code> to populate.
+        </td></tr>
+        {% endfor %}
+    </tbody>
+</table>
+</div>
+
+<p style="color:var(--muted);font-size:11px;margin-top:16px;">
+    SBC % Rev colored: <span class="sbc-high">red &gt;15%</span> ·
+    <span class="sbc-med">orange 7–15%</span> ·
+    <span class="sbc-low">green &lt;7%</span>.
+    Revenue growth: <span class="growth-high">green &gt;25%</span> ·
+    <span class="growth-med">yellow 10–25%</span> ·
+    <span style="color:var(--muted)">grey &lt;10%</span>.
+    Data sourced from SEC EDGAR 10-K/10-Q filings.
+</p>
+{% endblock %}

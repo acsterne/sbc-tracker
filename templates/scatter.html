@@ -1,0 +1,160 @@
+{% extends "base.html" %}
+{% block title %}SBC vs Growth — SBC Tracker{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1>SBC vs Revenue Growth</h1>
+    <p>Are companies earning their SBC? High SBC + high growth = justified. High SBC + low growth = problem.</p>
+</div>
+
+<div class="filter-bar">
+    <form method="get">
+        <select name="year" onchange="this.form.submit()">
+            {% for y in available_years %}
+            <option value="{{ y }}" {% if year|string == y|string %}selected{% endif %}>{{ y }}</option>
+            {% endfor %}
+        </select>
+    </form>
+</div>
+
+<div class="card" style="margin-bottom:24px;">
+    <canvas id="scatterChart" height="500"></canvas>
+</div>
+
+<!-- Quadrant explainer -->
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:24px;">
+    <div class="card" style="border-color:#22c55e33;">
+        <div style="color:#22c55e;font-weight:700;margin-bottom:4px;">✓ Earning It (High Growth, Lower SBC %)</div>
+        <div style="color:var(--muted);font-size:13px;">Growth justifies dilution. Shareholders are getting something in return.</div>
+    </div>
+    <div class="card" style="border-color:#ef444433;">
+        <div style="color:#ef4444;font-weight:700;margin-bottom:4px;">✗ Danger Zone (Low Growth, High SBC %)</div>
+        <div style="color:var(--muted);font-size:13px;">Diluting shareholders without delivering growth. This is where Snap lives.</div>
+    </div>
+</div>
+
+<!-- Data table below chart -->
+<div class="card">
+    <div style="font-weight:600;margin-bottom:16px;font-size:13px;">{{ year }} Data Points</div>
+    <div class="table-wrap">
+    <table>
+        <thead>
+            <tr>
+                <th>Ticker</th>
+                <th>Company</th>
+                <th>Sector</th>
+                <th class="num">SBC % Rev</th>
+                <th class="num">Rev Growth</th>
+                <th class="num">SBC ($)</th>
+                <th class="num">Revenue ($)</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for p in points | sort(attribute='sbc_pct_revenue', reverse=True) %}
+            <tr>
+                <td><a href="/company/{{ p.ticker }}" style="font-weight:600;">{{ p.ticker }}</a></td>
+                <td>{{ p.name }}</td>
+                <td><span class="badge badge-sector">{{ p.sector }}</span></td>
+                <td class="num
+                    {% if p.sbc_pct_revenue > 15 %}sbc-high
+                    {% elif p.sbc_pct_revenue > 7 %}sbc-med
+                    {% else %}sbc-low{% endif %}">
+                    {{ p.sbc_pct_revenue | pct }}
+                </td>
+                <td class="num
+                    {% if p.revenue_growth_yoy > 25 %}growth-high
+                    {% elif p.revenue_growth_yoy > 10 %}growth-med
+                    {% else %}growth-low{% endif %}">
+                    {{ p.revenue_growth_yoy | pct }}
+                </td>
+                <td class="num">{{ p.sbc_annual | compact }}</td>
+                <td class="num">{{ p.revenue_annual | compact }}</td>
+            </tr>
+            {% else %}
+            <tr><td colspan="7" style="text-align:center;color:var(--muted);padding:32px;">
+                No data. Run <code>python3 fetch_sbc.py</code> first.
+            </td></tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script>
+const rawPoints = {{ points | tojson }};
+
+// Assign colors by sector
+const sectorColors = {
+    'Mega Cap':          '#6366f1',
+    'SaaS':              '#22c55e',
+    'Security':          '#f97316',
+    'Infrastructure':    '#eab308',
+    'AI / Neo-Cloud':    '#ec4899',
+    'Social / Consumer': '#ef4444',
+};
+function sectorColor(s) { return sectorColors[s] || '#8892a4'; }
+
+const datasets = {};
+rawPoints.forEach(p => {
+    if (!datasets[p.sector]) {
+        datasets[p.sector] = { label: p.sector, data: [], backgroundColor: sectorColor(p.sector) + 'cc', pointRadius: 8, pointHoverRadius: 11 };
+    }
+    datasets[p.sector].data.push({
+        x: parseFloat(p.revenue_growth_yoy) || 0,
+        y: parseFloat(p.sbc_pct_revenue) || 0,
+        ticker: p.ticker,
+        name: p.name,
+    });
+});
+
+new Chart(document.getElementById('scatterChart'), {
+    type: 'scatter',
+    data: { datasets: Object.values(datasets) },
+    options: {
+        responsive: true,
+        plugins: {
+            legend: { labels: { color: '#8892a4', font: { size: 12 }, padding: 20 } },
+            tooltip: {
+                callbacks: {
+                    label: ctx => {
+                        const d = ctx.raw;
+                        return `${d.ticker} (${d.name}): SBC ${ctx.parsed.y.toFixed(1)}% rev, Growth ${ctx.parsed.x.toFixed(1)}%`;
+                    }
+                }
+            },
+        },
+        scales: {
+            x: {
+                title: { display: true, text: 'Revenue Growth YoY (%)', color: '#8892a4' },
+                ticks: { color: '#8892a4', callback: v => v + '%' },
+                grid: { color: '#2a2d3a' },
+            },
+            y: {
+                title: { display: true, text: 'SBC % of Revenue', color: '#8892a4' },
+                ticks: { color: '#8892a4', callback: v => v + '%' },
+                grid: { color: '#2a2d3a' },
+            }
+        },
+        // Draw quadrant reference lines via annotation plugin would need extra dep — skip for now
+    },
+    plugins: [{
+        // Draw ticker labels on each point
+        afterDraw(chart) {
+            const ctx2 = chart.ctx;
+            ctx2.save();
+            ctx2.font = '11px -apple-system, sans-serif';
+            ctx2.fillStyle = '#e2e8f0';
+            chart.data.datasets.forEach((ds, di) => {
+                const meta = chart.getDatasetMeta(di);
+                meta.data.forEach((point, pi) => {
+                    const d = ds.data[pi];
+                    ctx2.fillText(d.ticker, point.x + 6, point.y - 4);
+                });
+            });
+            ctx2.restore();
+        }
+    }]
+});
+</script>
+{% endblock %}
