@@ -131,10 +131,12 @@ def extract_concept(facts, concepts, unit="USD"):
                 if end not in quarterly or accn > quarterly[end]["accn"]:
                     quarterly[end] = {"val": val, "accn": accn}
         if annual or quarterly:
+            print(f"    [XBRL] matched '{concept}': {len(annual)} annual, {len(quarterly)} quarterly rows")
             return (
                 {k: v["val"] for k, v in annual.items()},
                 {k: v["val"] for k, v in quarterly.items()},
             )
+    print(f"    [XBRL] no match for concepts: {concepts}")
     return {}, {}
 
 
@@ -250,6 +252,9 @@ def refresh_metrics(cur, company_id):
     10-K data is authoritative — quarterly (10-Q) filings store YTD cumulative values
     which would double-count if summed.
     """
+    # Wipe and recompute cleanly — avoids stale rows from previous runs
+    cur.execute("DELETE FROM metrics WHERE company_id = %s", (company_id,))
+
     cur.execute("""
         SELECT fiscal_year,
                sbc_expense, revenue, gross_profit, net_income,

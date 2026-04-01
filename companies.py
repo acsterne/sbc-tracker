@@ -19,7 +19,7 @@ COMPANIES = [
     {"ticker": "WDAY",  "name": "Workday",            "cik": "0001327811",  "sector": "SaaS", "ipo_year": 2012},
     {"ticker": "NOW",   "name": "ServiceNow",         "cik": "0001373715",  "sector": "SaaS", "ipo_year": 2012},
     {"ticker": "SNOW",  "name": "Snowflake",          "cik": "0001640147",  "sector": "SaaS", "ipo_year": 2020},
-    {"ticker": "DDOG",  "name": "Datadog",            "cik": "0001774180",  "sector": "SaaS", "ipo_year": 2019},
+    {"ticker": "DDOG",  "name": "Datadog",            "cik": "0001561550",  "sector": "SaaS", "ipo_year": 2019},
     {"ticker": "MDB",   "name": "MongoDB",            "cik": "0001441816",  "sector": "SaaS", "ipo_year": 2017},
     {"ticker": "CRWD",  "name": "CrowdStrike",        "cik": "0001535527",  "sector": "SaaS", "ipo_year": 2019},
     {"ticker": "ZS",    "name": "Zscaler",            "cik": "0001713683",  "sector": "SaaS", "ipo_year": 2018},
@@ -39,13 +39,13 @@ COMPANIES = [
     {"ticker": "PANW",  "name": "Palo Alto Networks", "cik": "0001327567",  "sector": "Security", "ipo_year": 2012},
     {"ticker": "FTNT",  "name": "Fortinet",           "cik": "0001262039",  "sector": "Security", "ipo_year": 2009},
     {"ticker": "NET",   "name": "Cloudflare",         "cik": "0001477333",  "sector": "Infrastructure", "ipo_year": 2019},
-    {"ticker": "FSLY",  "name": "Fastly",             "cik": "0001610985",  "sector": "Infrastructure", "ipo_year": 2019},
+    {"ticker": "FSLY",  "name": "Fastly",             "cik": "0001517413",  "sector": "Infrastructure", "ipo_year": 2019},
 
     # ── AI / Neo-Cloud ─────────────────────────────────────────────────────────
     {"ticker": "PLTR",  "name": "Palantir",           "cik": "0001321655",  "sector": "AI / Neo-Cloud", "ipo_year": 2020},
     {"ticker": "AI",    "name": "C3.ai",              "cik": "0001577552",  "sector": "AI / Neo-Cloud", "ipo_year": 2020},
     {"ticker": "SOUN",  "name": "SoundHound AI",      "cik": "0001840292",  "sector": "AI / Neo-Cloud", "ipo_year": 2022},
-    {"ticker": "CRWV",  "name": "CoreWeave",          "cik": "0001866251",  "sector": "AI / Neo-Cloud", "ipo_year": 2025},
+    {"ticker": "CRWV",  "name": "CoreWeave",          "cik": "0001769628",  "sector": "AI / Neo-Cloud", "ipo_year": 2025},
     {"ticker": "BBAI",  "name": "BigBear.ai",         "cik": "0001836935",  "sector": "AI / Neo-Cloud", "ipo_year": 2021},
 
     # ── Notable SBC cases (for editorial context) ──────────────────────────────

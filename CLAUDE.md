@@ -32,7 +32,7 @@ Master list of tracked companies — ticker, name, CIK (SEC identifier), sector,
 One row per company per period (annual 10-K and quarterly 10-Q). Raw financials: SBC expense, revenue, gross profit, net income, shares outstanding, shares repurchased, buyback spend. Indexed by (company_id, period_end, form_type).
 
 ### `metrics`
-Annual rolled-up metrics computed from filings. Stores pre-computed ratios: sbc_pct_revenue, sbc_pct_gross_profit, net_dilution_pct, sbc_per_share, revenue_growth_yoy. Refreshed by `fetch_sbc.py` after each fetch. Unique on (company_id, fiscal_year).
+Annual metrics computed from 10-K filings only (10-Q data is YTD cumulative and would double-count if summed). Stores pre-computed ratios: sbc_pct_revenue, sbc_pct_gross_profit, net_dilution_pct, sbc_per_share, revenue_growth_yoy. Refreshed by `fetch_sbc.py` after each fetch. Unique on (company_id, fiscal_year).
 
 ## Key architecture decisions
 - **Raw SQL, no ORM** — consistent with other projects.
