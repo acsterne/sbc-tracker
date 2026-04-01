@@ -40,6 +40,10 @@
         <input type="hidden" name="sort" value="{{ sort }}">
         <input type="hidden" name="order" value="{{ order }}">
 
+        <input type="text" id="searchBox" placeholder="Search ticker or company…"
+               style="padding:6px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:13px;width:180px;"
+               autocomplete="off">
+
         <select name="year" onchange="this.form.submit()">
             <option value="">Latest year (per company)</option>
             {% for y in available_years %}
@@ -145,4 +149,16 @@
     <span style="color:var(--muted)">grey &lt;10%</span>.
     Data sourced from SEC EDGAR 10-K filings.
 </p>
+
+<script>
+document.getElementById('searchBox').addEventListener('input', function() {
+    const q = this.value.toLowerCase();
+    document.querySelectorAll('tbody tr').forEach(row => {
+        const ticker = (row.cells[0] || {}).textContent || '';
+        const name   = (row.cells[1] || {}).textContent || '';
+        row.style.display = (!q || ticker.toLowerCase().includes(q) || name.toLowerCase().includes(q))
+            ? '' : 'none';
+    });
+});
+</script>
 {% endblock %}
