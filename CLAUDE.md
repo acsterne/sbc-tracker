@@ -49,6 +49,8 @@ Stores which XBRL tag was dynamically selected per company per concept, how many
 - **Dynamic XBRL tag discovery** — before extracting data, `discover_tags()` scores every tag in the companyfacts JSON (annual period count + us-gaap namespace bonus + hardcoded-list bonus + concept-specific bonuses) and picks the best tag per concept. Discovered tag is prepended to the hardcoded fallback list so it wins for same-period conflicts; hardcoded tags fill gaps.
 - **XBRL concept merge** — each metric (SBC, revenue, etc.) iterates a priority-ordered list of XBRL concept names and merges data across all matching concepts. Earlier concepts win for the same period; later concepts fill gaps. Handles companies that switch XBRL tags between years (e.g. Alphabet revenue).
 - **Coverage matrix** — after a full ingestion run, `print_coverage_matrix()` prints a GREEN/YELLOW/RED matrix showing % of expected annual periods filled per company × concept; flags cells below 70%.
+- **Upsert preserves existing data** — filings upsert uses `COALESCE(filings.field, EXCLUDED.field)` so existing non-null values are never overwritten. Only null fields get filled. To fix bad data: delete the company's rows first, then re-ingest.
+- **Multi-class share structures** — `extract_shares_outstanding` handles companies with multiple share classes (e.g. META Class A+B, GOOGL Class A+B+C). If no single total tag exists, sums per-class shares outstanding automatically.
 - **Precomputed metrics table** — ratios stored in DB, not computed on every request.
 - **EDGAR rate limit** — SEC allows ~10 req/sec; we sleep 0.5s between companies to be safe.
 - **EDGAR User-Agent required** — SEC blocks generic agents; use a descriptive User-Agent with contact email.
@@ -56,7 +58,7 @@ Stores which XBRL tag was dynamically selected per company per concept, how many
 ## Routes
 | Path | Purpose |
 |---|---|
-| `/` | Leaderboard — all companies, latest year, sortable by any metric |
+| `/` | Leaderboard — all companies, latest year, sortable by any metric, filterable by ticker/name |
 | `/company/<ticker>` | Company detail — historical charts (profitability, dilution/ownership) + year-by-year table |
 | `/scatter` | Scatter plot: SBC % Revenue (Y) vs Revenue Growth (X) |
 | `/api/debug/coverage` | JSON: per-company data coverage (most recent year, years with SBC data) |

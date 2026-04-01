@@ -71,7 +71,8 @@ CONCEPT_MATCHERS = {
                         "revenues", "sales"],
         "require_all": [],
         "exclude":     ["cost of", "deferred", "unearned", "backlog",
-                        "remaining performance", "contract liability"],
+                        "remaining performance", "contract liability",
+                        "other sales", "other revenue", "other operating"],
         "bonus":       ["total", "net"],
     },
     "gross_profit": {
@@ -114,6 +115,21 @@ CONCEPT_MATCHERS = {
 }
 
 ALL_CONCEPTS = list(CONCEPT_MATCHERS.keys()) + ["shares_outstanding"]
+
+# Concepts where consolidated total > segment subtotal — always pick largest value
+PREFER_LARGER_VALUE = {"sbc", "revenue", "operating_income", "net_income"}
+
+# Tags that look like a concept match but are wrong (segment, "other", fair value, etc.)
+TAG_BLACKLIST = {
+    "revenue": {
+        "OtherSalesRevenueNet", "OtherRevenue", "RevenueOther",
+        "OtherSalesRevenue", "RevenuesOther", "OtherOperatingIncome",
+        "OtherNonoperatingIncomeExpense",
+    },
+    "sbc": {
+        "ShareBasedCompensationArrangementByShareBasedPaymentAwardEquityInstrumentsOtherThanOptionsVestedInPeriodTotalFairValue",
+    },
+}
 
 # Direct tag-name priority lists (bypass fuzzy matching for reliability)
 SHARES_TAG_PRIORITY = [
@@ -552,27 +568,38 @@ def map_to_concepts(facts, fiscal_year):
 
     results = {}
     for concept in CONCEPT_MATCHERS:  # USD concepts only
-        best_score = 0
-        best_fact  = None
+        blacklist = TAG_BLACKLIST.get(concept, set())
+        candidates = []
         for f in annual:
+            if f["tag"] in blacklist:
+                continue
             s1, m1 = _score_label(f["label"], concept)
             s2, m2 = _score_label(_camel_to_words(f["tag"]), concept)
             score  = max(s1, s2)
-            if score > best_score:
-                best_score = score
-                best_fact  = f
+            if score >= 10:
+                candidates.append((score, f))
 
-        if best_fact and best_score >= 10:
-            # Debug: print raw→normalized for every mapped concept
-            print(f"        [MAP] {concept}: tag={best_fact['tag']} "
-                  f"raw={best_fact.get('raw_text','')} dec={best_fact.get('decimals','')} "
-                  f"→ ${best_fact['value']:,} (score={best_score})")
-            results[concept] = {
-                "value":      best_fact["value"],
-                "tag":        best_fact["tag"],
-                "label":      best_fact["label"],
-                "confidence": "high" if best_score >= 14 else "medium",
-            }
+        if not candidates:
+            continue
+
+        if concept in PREFER_LARGER_VALUE and len(candidates) > 1:
+            # Consolidated totals are always larger than segment subtotals
+            best_fact = max(candidates, key=lambda x: abs(x[1]["value"]))[1]
+            best_score = max(s for s, _ in candidates)
+        else:
+            best_score, best_fact = max(candidates, key=lambda x: x[0])
+
+        # Debug: show raw→normalized + how many candidates existed
+        extra = f" ({len(candidates)} candidates)" if len(candidates) > 1 else ""
+        print(f"        [MAP] {concept}: tag={best_fact['tag']} "
+              f"raw={best_fact.get('raw_text','')} dec={best_fact.get('decimals','')} "
+              f"→ ${best_fact['value']:,}{extra}")
+        results[concept] = {
+            "value":      best_fact["value"],
+            "tag":        best_fact["tag"],
+            "label":      best_fact["label"],
+            "confidence": "high" if best_score >= 14 else "medium",
+        }
 
     return results
 
