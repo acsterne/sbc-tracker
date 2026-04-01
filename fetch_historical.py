@@ -17,7 +17,7 @@ import json
 import argparse
 import psycopg2
 import psycopg2.extras
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 
 from edgar import Company, set_identity
 set_identity("research@sbctracker.io")
@@ -54,14 +54,14 @@ def load_checkpoint():
 def save_checkpoint(completed):
     with open(CHECKPOINT_FILE, "w") as f:
         json.dump({"completed": sorted(completed),
-                    "last_updated": datetime.utcnow().isoformat() + "Z",
+                    "last_updated": datetime.now(tz=timezone.utc).isoformat() + "Z",
                     "count": len(completed)}, f, indent=2)
 
 
 # ── Per-filing log ────────────────────────────────────────────────────────────
 
 def log_filing(ticker, fiscal_year, source, found, missing):
-    ts = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+    ts = datetime.now(tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     line = (f"{ts} | {ticker:<6} | FY{fiscal_year} | src={source:<12} | "
             f"found=[{','.join(found)}] | missing=[{','.join(missing)}]\n")
     with open(INGESTION_LOG, "a") as f:
@@ -288,7 +288,7 @@ def process_company(cur, company_id, ticker, cik, force=False):
 
     try:
         company = Company(ticker)
-        filings = company.get_filings(form="10-K")
+        filings = company.get_filings(form="10-K", amendments=False)
     except Exception as e:
         print(f"    [ERROR] could not load company: {e}")
         return {"total": 0, "with_sbc": 0, "failed": 0}
