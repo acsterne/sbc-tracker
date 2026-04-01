@@ -2,7 +2,6 @@
 builder = "nixpacks"
 
 [deploy]
-startCommand = "gunicorn app:app"
 healthcheckPath = "/"
 restartPolicyType = "on_failure"
 
