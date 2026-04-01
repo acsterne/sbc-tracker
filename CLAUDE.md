@@ -26,7 +26,10 @@ DATABASE_URL=postgresql://... python3 fetch_sbc.py --ticker SNAP
 DATABASE_URL=postgresql://... python3 fetch_historical.py
 DATABASE_URL=postgresql://... python3 fetch_historical.py --ticker SNAP
 DATABASE_URL=postgresql://... python3 fetch_historical.py --force  # re-fetch even if data exists
+DATABASE_URL=postgresql://... python3 fetch_historical.py --reset-checkpoint  # clear checkpoint and start fresh
 
+# fetch_historical.py auto-validates after each company (benchmarks + sanity rules + auto-heal).
+# validate.py still works standalone for quick checks without re-fetching:
 # Validate ingested data against ground-truth benchmarks + sanity rules
 DATABASE_URL=postgresql://... python3 validate.py
 DATABASE_URL=postgresql://... python3 validate.py --ticker META
