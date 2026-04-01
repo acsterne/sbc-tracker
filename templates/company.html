@@ -8,7 +8,7 @@
 
 <div class="page-header">
     <h1>{{ co.name }} <span style="color:var(--muted);font-weight:400;font-size:16px;">({{ co.ticker }})</span></h1>
-    <p>{{ co.sector }} · IPO {{ co.ipo_year or "—" }} · Historical SBC from SEC EDGAR</p>
+    <p>{{ co.sector }} · IPO {{ first_10k_year or co.ipo_year or "—" }} · Historical SBC from SEC EDGAR</p>
 </div>
 
 {% if history %}
@@ -124,12 +124,11 @@
             </tr>
         </thead>
         <tbody>
-            {% set first_year = history[0].fiscal_year if history else 0 %}
             {% for r in history | reverse %}
             <tr>
                 <td style="font-weight:600;">
                     {{ r.fiscal_year }}
-                    {% if r.fiscal_year == first_year %}
+                    {% if first_10k_year and r.fiscal_year == first_10k_year %}
                     <span style="display:inline-block;background:#e2e8f0;color:#475569;font-size:10px;padding:1px 5px;border-radius:3px;margin-left:4px;font-weight:500;vertical-align:middle;">IPO</span>
                     {% endif %}
                 </td>

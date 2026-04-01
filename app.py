@@ -157,6 +157,14 @@ def company(ticker):
     if not co:
         return "Company not found", 404
 
+    # First 10-K year = single source of truth for IPO year display
+    cur.execute("""
+        SELECT MIN(fiscal_year) AS yr FROM filings
+        WHERE company_id = %s AND form_type = '10-K' AND sbc_expense IS NOT NULL
+    """, (co["id"],))
+    row = cur.fetchone()
+    first_10k_year = row["yr"] if row else co["ipo_year"]
+
     cur.execute("""
         SELECT
             m.fiscal_year,
@@ -189,6 +197,7 @@ def company(ticker):
     return render_template("company.html",
         co=co,
         history=history,
+        first_10k_year=first_10k_year,
         chart_years=chart_years,
         chart_sbc=chart_sbc,
         chart_rev=chart_rev,
