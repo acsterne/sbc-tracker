@@ -25,6 +25,28 @@ ALTER TABLE metrics
     ADD COLUMN IF NOT EXISTS sbc_pct_ebitda NUMERIC(8,4),
     ADD COLUMN IF NOT EXISTS ebitda_negative BOOLEAN;
 
+-- Deduplicate filings: keep best row per (company_id, fiscal_year, form_type)
+-- Run BEFORE the constraint change below
+DELETE FROM filings f
+WHERE f.id NOT IN (
+    SELECT DISTINCT ON (company_id, fiscal_year, form_type) id
+    FROM filings
+    ORDER BY company_id, fiscal_year, form_type,
+        (CASE WHEN sbc_expense IS NOT NULL THEN 1 ELSE 0 END +
+         CASE WHEN revenue IS NOT NULL THEN 1 ELSE 0 END +
+         CASE WHEN net_income IS NOT NULL THEN 1 ELSE 0 END +
+         CASE WHEN shares_outstanding IS NOT NULL THEN 1 ELSE 0 END +
+         CASE WHEN buyback_spend IS NOT NULL THEN 1 ELSE 0 END +
+         CASE WHEN operating_income IS NOT NULL THEN 1 ELSE 0 END +
+         CASE WHEN depreciation_amortization IS NOT NULL THEN 1 ELSE 0 END) DESC
+);
+
+-- Switch unique constraint from (company_id, period_end, form_type)
+-- to (company_id, fiscal_year, form_type) to prevent future duplicates
+ALTER TABLE filings DROP CONSTRAINT IF EXISTS filings_company_id_period_end_form_type_key;
+ALTER TABLE filings ADD CONSTRAINT filings_company_fiscal_year_form_type_key
+    UNIQUE (company_id, fiscal_year, form_type);
+
 -- Dynamic tag discovery (run after EBITDA migrations above)
 CREATE TABLE IF NOT EXISTS company_tags (
     id            SERIAL PRIMARY KEY,

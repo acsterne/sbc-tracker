@@ -36,7 +36,7 @@ CREATE TABLE IF NOT EXISTS filings (
     accession_number        TEXT,                   -- EDGAR accession number for traceability
     fetched_at              TIMESTAMPTZ DEFAULT NOW(),
 
-    UNIQUE(company_id, period_end, form_type)
+    UNIQUE(company_id, fiscal_year, form_type)
 );
 
 -- Materialized metrics (computed from filings, refreshed after each fetch)

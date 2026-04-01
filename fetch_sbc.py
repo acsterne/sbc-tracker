@@ -437,7 +437,7 @@ def layer1_save_filings(cur, company_id, facts):
                 %(unrec)s, %(oi)s, %(da)s,
                 %(ebitda)s, %(ebitda_src)s, %(src)s, %(conf)s
             )
-            ON CONFLICT (company_id, period_end, form_type) DO UPDATE SET
+            ON CONFLICT (company_id, fiscal_year, form_type) DO UPDATE SET
                 sbc_expense               = COALESCE(EXCLUDED.sbc_expense, filings.sbc_expense),
                 revenue                   = COALESCE(EXCLUDED.revenue, filings.revenue),
                 gross_profit              = COALESCE(EXCLUDED.gross_profit, filings.gross_profit),
@@ -581,7 +581,7 @@ def layer2_fetch_and_save(cur, company_id, cik, filing, covered_years):
             company_id, period_end, fiscal_year, fiscal_quarter, form_type,
             sbc_expense, data_source, confidence
         ) VALUES (%(cid)s, %(pe)s, %(fy)s, NULL, '10-K', %(sbc)s, %(src)s, %(conf)s)
-        ON CONFLICT (company_id, period_end, form_type) DO UPDATE SET
+        ON CONFLICT (company_id, fiscal_year, form_type) DO UPDATE SET
             sbc_expense = COALESCE(EXCLUDED.sbc_expense, filings.sbc_expense),
             data_source = COALESCE(filings.data_source, EXCLUDED.data_source),
             confidence  = COALESCE(filings.confidence, EXCLUDED.confidence),
@@ -660,7 +660,7 @@ def layer3_fetch_and_save(cur, company_id, cik, filing, covered_years):
                         company_id, period_end, fiscal_year, fiscal_quarter, form_type,
                         sbc_expense, data_source, confidence
                     ) VALUES (%(cid)s, %(pe)s, %(fy)s, NULL, '10-K', %(sbc)s, 'layer3|html_parse', 'low')
-                    ON CONFLICT (company_id, period_end, form_type) DO UPDATE SET
+                    ON CONFLICT (company_id, fiscal_year, form_type) DO UPDATE SET
                         sbc_expense = COALESCE(EXCLUDED.sbc_expense, filings.sbc_expense),
                         data_source = COALESCE(filings.data_source, EXCLUDED.data_source),
                         confidence  = COALESCE(filings.confidence, EXCLUDED.confidence),
@@ -679,13 +679,18 @@ def refresh_metrics(cur, company_id):
     """Compute annual metrics from 10-K filings only (10-Q is YTD cumulative)."""
     cur.execute("DELETE FROM metrics WHERE company_id = %s", (company_id,))
     cur.execute("""
-        SELECT fiscal_year,
+        SELECT DISTINCT ON (fiscal_year)
+               fiscal_year,
                sbc_expense, revenue, gross_profit, net_income,
                buyback_spend, shares_repurchased, shares_outstanding,
                unrecognized_sbc, operating_income, depreciation_amortization, ebitda
         FROM filings
         WHERE company_id = %s AND form_type = '10-K'
-        ORDER BY fiscal_year
+        ORDER BY fiscal_year,
+            (CASE WHEN sbc_expense IS NOT NULL THEN 1 ELSE 0 END +
+             CASE WHEN revenue IS NOT NULL THEN 1 ELSE 0 END +
+             CASE WHEN net_income IS NOT NULL THEN 1 ELSE 0 END +
+             CASE WHEN shares_outstanding IS NOT NULL THEN 1 ELSE 0 END) DESC
     """, (company_id,))
     rows = {r["fiscal_year"]: r for r in cur.fetchall()}
     prev_rev = None

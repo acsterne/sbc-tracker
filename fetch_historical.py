@@ -821,7 +821,7 @@ def process_filing(cur, company_id, ticker, cik, filing, force=False):
             %(oi)s,  %(da)s, %(ebitda)s, %(ebitda_src)s,
             %(accn)s, %(src)s, %(conf)s
         )
-        ON CONFLICT (company_id, period_end, form_type) DO UPDATE SET
+        ON CONFLICT (company_id, fiscal_year, form_type) DO UPDATE SET
             sbc_expense               = COALESCE(EXCLUDED.sbc_expense,
                                                  filings.sbc_expense),
             revenue                   = COALESCE(EXCLUDED.revenue,
