@@ -1,0 +1,281 @@
+{% extends "base.html" %}
+{% block title %}Analysis — SBC Tracker{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1>Cross-Company Analysis</h1>
+    <p>Comparative metrics across all tracked companies. Latest fiscal year per company.</p>
+</div>
+
+<!-- Filters -->
+<div class="filter-bar">
+    <form method="get" style="display:flex;gap:12px;flex-wrap:wrap;align-items:center;">
+        <select name="sector" onchange="this.form.submit()">
+            <option value="">All sectors</option>
+            {% for s in available_sectors %}
+            <option value="{{ s }}" {% if sector == s %}selected{% endif %}>{{ s }}</option>
+            {% endfor %}
+        </select>
+        <select name="min_rev" onchange="this.form.submit()">
+            <option value="0" {% if min_rev == '0' %}selected{% endif %}>All revenue sizes</option>
+            <option value="500000000" {% if min_rev == '500000000' %}selected{% endif %}>$500M+ revenue</option>
+            <option value="1000000000" {% if min_rev == '1000000000' %}selected{% endif %}>$1B+ revenue</option>
+            <option value="5000000000" {% if min_rev == '5000000000' %}selected{% endif %}>$5B+ revenue</option>
+        </select>
+        {% if sector or min_rev != '0' %}
+        <a href="/analysis" style="color:var(--muted);font-size:12px;">Clear filters</a>
+        {% endif %}
+    </form>
+</div>
+
+<!-- Tab nav -->
+<div style="display:flex;gap:8px;margin-bottom:24px;flex-wrap:wrap;">
+    <button class="tab-btn active" onclick="showTab('scatter')">Paying for Growth</button>
+    <button class="tab-btn" onclick="showTab('offenders')">Worst Offenders</button>
+    <button class="tab-btn" onclick="showTab('buyback')">Buyback Offset</button>
+    <button class="tab-btn" onclick="showTab('dilution')">Cumulative Dilution</button>
+    <button class="tab-btn" onclick="showTab('efficiency')">SBC Efficiency</button>
+</div>
+
+<style>
+.tab-btn {
+    background: var(--surface); border: 1px solid var(--border); border-radius: 6px;
+    padding: 8px 16px; font-size: 13px; font-weight: 500; color: var(--muted);
+    cursor: pointer; transition: all 0.15s;
+}
+.tab-btn:hover { color: var(--text); border-color: var(--accent); }
+.tab-btn.active { background: var(--accent); color: white; border-color: var(--accent); }
+.tab-panel { display: none; }
+.tab-panel.active { display: block; }
+</style>
+
+<!-- Tab 1: Scatter -->
+<div id="tab-scatter" class="tab-panel active">
+<div class="card" style="margin-bottom:20px;">
+    <div style="font-weight:600;margin-bottom:4px;font-size:15px;">Paying for Growth</div>
+    <div style="color:var(--muted);font-size:12px;margin-bottom:20px;">
+        Each bubble shows SBC as % of revenue vs revenue growth. Bubble size = SBC dollars.
+        Companies top-left are diluting shareholders without delivering growth.
+    </div>
+    <canvas id="scatterChart" height="400"></canvas>
+</div>
+</div>
+
+<!-- Tab 2: Worst Offenders -->
+<div id="tab-offenders" class="tab-panel">
+<div class="card" style="margin-bottom:20px;">
+    <div style="font-weight:600;margin-bottom:4px;font-size:15px;">Worst Offenders — Net Dilution Burden</div>
+    <div style="color:var(--muted);font-size:12px;margin-bottom:20px;">
+        SBC minus buybacks as % of revenue. This is the real cost to shareholders after any buyback offset.
+    </div>
+    <canvas id="offendersChart"></canvas>
+</div>
+</div>
+
+<!-- Tab 3: Buyback Offset -->
+<div id="tab-buyback" class="tab-panel">
+<div class="card" style="margin-bottom:20px;">
+    <div style="font-weight:600;margin-bottom:4px;font-size:15px;">Buyback Offset Ratio</div>
+    <div style="color:var(--muted);font-size:12px;margin-bottom:20px;">
+        What % of SBC expense is being returned via buybacks. 100% means buybacks fully offset dilution.
+    </div>
+    <canvas id="buybackChart"></canvas>
+</div>
+</div>
+
+<!-- Tab 4: Cumulative Dilution -->
+<div id="tab-dilution" class="tab-panel">
+<div class="card" style="margin-bottom:20px;">
+    <div style="font-weight:600;margin-bottom:4px;font-size:15px;">Cumulative Dilution Since First 10-K</div>
+    <div style="color:var(--muted);font-size:12px;margin-bottom:20px;">
+        Total share count change since earliest data. Positive = dilution (more shares), negative = net buyback (fewer shares).
+    </div>
+    <canvas id="dilutionChart"></canvas>
+</div>
+</div>
+
+<!-- Tab 5: SBC Efficiency -->
+<div id="tab-efficiency" class="tab-panel">
+<div class="card" style="margin-bottom:20px;">
+    <div style="font-weight:600;margin-bottom:4px;font-size:15px;">SBC Efficiency — Revenue per $1 of SBC</div>
+    <div style="color:var(--muted);font-size:12px;margin-bottom:20px;">
+        Revenue generated per $1 of SBC expense. Higher means dilution is buying more growth.
+    </div>
+    <canvas id="efficiencyChart"></canvas>
+</div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script>
+const RAW = {{ data | safe }};
+const SECTOR_COLORS = {
+    'Mega Cap': '#8b5cf6', 'SaaS': '#3b82f6', 'Security': '#10b981',
+    'Infrastructure': '#06b6d4', 'AI / Neo-Cloud': '#f59e0b',
+    'Social / Consumer': '#ef4444',
+};
+const sectorColor = s => SECTOR_COLORS[s] || '#6b7280';
+
+// ── Tab navigation ───────────────────────────────────────────────────────────
+function showTab(id) {
+    document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+    document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+    document.getElementById('tab-' + id).classList.add('active');
+    event.target.classList.add('active');
+}
+
+const axisStyle = { ticks: { color: '#6b7280', font: { size: 11 } }, grid: { color: '#e2e6ed' } };
+
+// ── Chart 1: Scatter — Paying for Growth ─────────────────────────────────────
+const scatterData = RAW.filter(d => d.sbc_pct_rev && d.growth !== null);
+const medianPct = scatterData.map(d => d.sbc_pct_rev).sort((a,b) => a-b);
+const medianGrowth = scatterData.map(d => d.growth).sort((a,b) => a-b);
+const medPct = medianPct[Math.floor(medianPct.length/2)] || 10;
+const medGr  = medianGrowth[Math.floor(medianGrowth.length/2)] || 15;
+
+new Chart(document.getElementById('scatterChart'), {
+    type: 'bubble',
+    data: {
+        datasets: scatterData.map(d => ({
+            label: d.ticker,
+            data: [{ x: Math.min(d.growth, 200), y: d.sbc_pct_rev, r: Math.max(4, Math.sqrt(d.sbc / 1e8)) }],
+            backgroundColor: sectorColor(d.sector) + 'aa',
+            borderColor: sectorColor(d.sector),
+            borderWidth: 1,
+        }))
+    },
+    options: {
+        responsive: true,
+        plugins: {
+            legend: { display: false },
+            tooltip: {
+                callbacks: {
+                    label: ctx => {
+                        const d = scatterData[ctx.datasetIndex];
+                        return `${d.ticker}: SBC ${d.sbc_pct_rev.toFixed(1)}% of rev, Growth ${d.growth.toFixed(1)}%, SBC $${(d.sbc/1e9).toFixed(1)}B`;
+                    }
+                }
+            }
+        },
+        scales: {
+            x: { ...axisStyle, title: { display: true, text: 'Revenue Growth YoY %', color: '#6b7280' },
+                 min: -50, max: 200 },
+            y: { ...axisStyle, title: { display: true, text: 'SBC % of Revenue', color: '#6b7280' },
+                 min: 0 }
+        }
+    },
+    plugins: [{
+        afterDraw(chart) {
+            const ctx = chart.ctx;
+            const xAxis = chart.scales.x;
+            const yAxis = chart.scales.y;
+            // Quadrant dividers
+            ctx.save();
+            ctx.strokeStyle = '#d1d5db';
+            ctx.lineWidth = 1;
+            ctx.setLineDash([4, 4]);
+            const xMid = xAxis.getPixelForValue(medGr);
+            const yMid = yAxis.getPixelForValue(medPct);
+            ctx.beginPath(); ctx.moveTo(xMid, yAxis.top); ctx.lineTo(xMid, yAxis.bottom); ctx.stroke();
+            ctx.beginPath(); ctx.moveTo(xAxis.left, yMid); ctx.lineTo(xAxis.right, yMid); ctx.stroke();
+            ctx.setLineDash([]);
+            // Quadrant labels
+            ctx.font = '10px sans-serif';
+            ctx.fillStyle = '#9ca3af';
+            ctx.fillText('Expensive & Slow', xAxis.left + 8, yAxis.top + 14);
+            ctx.fillText('Expensive & Fast', xMid + 8, yAxis.top + 14);
+            ctx.fillText('Cheap & Slow', xAxis.left + 8, yAxis.bottom - 8);
+            ctx.fillText('Efficient Growth', xMid + 8, yAxis.bottom - 8);
+            // Ticker labels on bubbles
+            ctx.font = '10px -apple-system, sans-serif';
+            ctx.fillStyle = '#374151';
+            ctx.textAlign = 'center';
+            chart.data.datasets.forEach((ds, i) => {
+                const meta = chart.getDatasetMeta(i);
+                if (meta.data[0]) {
+                    ctx.fillText(ds.label, meta.data[0].x, meta.data[0].y - meta.data[0].options.radius - 3);
+                }
+            });
+            ctx.restore();
+        }
+    }]
+});
+
+// ── Horizontal bar helper ────────────────────────────────────────────────────
+function hBar(canvasId, items, valKey, labelFn, colorFn, xLabel, afterLabel) {
+    const sorted = [...items].sort((a,b) => b[valKey] - a[valKey]);
+    const canvas = document.getElementById(canvasId);
+    canvas.height = Math.max(300, sorted.length * 28);
+    new Chart(canvas, {
+        type: 'bar',
+        data: {
+            labels: sorted.map(d => d.ticker),
+            datasets: [{
+                data: sorted.map(d => d[valKey]),
+                backgroundColor: sorted.map(d => colorFn(d[valKey])),
+                borderWidth: 0,
+                barThickness: 18,
+            }]
+        },
+        options: {
+            indexAxis: 'y',
+            responsive: true,
+            plugins: {
+                legend: { display: false },
+                tooltip: {
+                    callbacks: {
+                        label: ctx => {
+                            const d = sorted[ctx.dataIndex];
+                            return afterLabel ? afterLabel(d) : `${d[valKey].toFixed(1)}`;
+                        }
+                    }
+                }
+            },
+            scales: {
+                x: { ...axisStyle, title: { display: true, text: xLabel, color: '#6b7280' } },
+                y: { ...axisStyle, ticks: { ...axisStyle.ticks, font: { size: 11, weight: '600' } } }
+            }
+        }
+    });
+}
+
+// ── Chart 2: Worst Offenders ─────────────────────────────────────────────────
+const offenders = RAW.filter(d => d.revenue > 0);
+hBar('offendersChart', offenders, 'net_dilution_burden',
+    d => d.ticker,
+    v => v > 10 ? '#ef4444' : v > 5 ? '#f97316' : '#22c55e',
+    'Net Dilution Burden (% of Revenue)',
+    d => `$${(d.sbc/1e9).toFixed(1)}B SBC - $${(d.buybacks/1e9).toFixed(1)}B BB = ${d.net_dilution_burden.toFixed(1)}% of rev`
+);
+
+// ── Chart 3: Buyback Offset ──────────────────────────────────────────────────
+const bbData = RAW.filter(d => d.sbc > 0).map(d => ({
+    ...d, buyback_offset: Math.min(d.buyback_offset, 150)
+}));
+hBar('buybackChart', bbData, 'buyback_offset',
+    d => d.ticker,
+    v => v >= 80 ? '#22c55e' : v >= 40 ? '#eab308' : '#ef4444',
+    'Buyback / SBC %',
+    d => `${d.buyback_offset.toFixed(0)}% — BB $${(d.buybacks/1e9).toFixed(1)}B / SBC $${(d.sbc/1e9).toFixed(1)}B`
+);
+
+// ── Chart 4: Cumulative Dilution ─────────────────────────────────────────────
+const dilData = RAW.filter(d => d.cum_dilution !== null);
+hBar('dilutionChart', dilData, 'cum_dilution',
+    d => d.ticker,
+    v => v > 0 ? '#ef4444' : '#22c55e',
+    'Share Count Change (%)',
+    d => `${d.cum_dilution > 0 ? '+' : ''}${d.cum_dilution.toFixed(1)}%`
+);
+
+// ── Chart 5: SBC Efficiency ─────────────────────────────────────────────────
+const effData = RAW.filter(d => d.sbc_efficiency > 0).map(d => ({
+    ...d, sbc_efficiency: Math.min(d.sbc_efficiency, 50)
+}));
+hBar('efficiencyChart', effData, 'sbc_efficiency',
+    d => d.ticker,
+    v => v >= 10 ? '#22c55e' : v >= 5 ? '#eab308' : '#ef4444',
+    'Revenue per $1 SBC (x)',
+    d => `${d.sbc_efficiency.toFixed(1)}x — $${(d.revenue/1e9).toFixed(0)}B rev / $${(d.sbc/1e9).toFixed(1)}B SBC`
+);
+</script>
+{% endblock %}

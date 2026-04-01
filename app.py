@@ -243,6 +243,114 @@ def debug_coverage():
     ]})
 
 
+@app.route("/analysis")
+def analysis():
+    """Analysis page with 5 cross-company charts."""
+    sector = request.args.get("sector", "")
+    min_rev = request.args.get("min_rev", "0")
+
+    conn = get_db()
+    cur = conn.cursor()
+
+    cur.execute("SELECT DISTINCT sector FROM companies ORDER BY sector")
+    available_sectors = [r["sector"] for r in cur.fetchall()]
+
+    # Base filter: latest year per company where SBC is not null
+    rev_filter = ""
+    params = {}
+    if min_rev and min_rev != "0":
+        rev_filter = "AND m.revenue_annual >= %(min_rev)s"
+        params["min_rev"] = int(min_rev)
+    sector_filter = "AND c.sector = %(sector)s" if sector else ""
+    if sector:
+        params["sector"] = sector
+
+    # All companies, latest year, with key metrics
+    cur.execute(f"""
+        SELECT
+            c.ticker, c.name, c.sector,
+            m.fiscal_year,
+            m.sbc_annual, m.revenue_annual, m.buyback_spend_annual,
+            m.sbc_pct_revenue, m.revenue_growth_yoy,
+            m.shares_outstanding_eoy, m.net_income_annual
+        FROM metrics m
+        JOIN companies c ON c.id = m.company_id
+        WHERE m.sbc_annual IS NOT NULL
+          AND m.fiscal_year = (
+              SELECT MAX(m2.fiscal_year) FROM metrics m2
+              WHERE m2.company_id = m.company_id AND m2.sbc_annual IS NOT NULL
+          )
+          {rev_filter}
+          {sector_filter}
+        ORDER BY c.ticker
+    """, params)
+    latest = cur.fetchall()
+
+    # Historical shares for cumulative dilution
+    cur.execute(f"""
+        SELECT c.ticker,
+            FIRST_VALUE(m.shares_outstanding_eoy) OVER (
+                PARTITION BY c.ticker ORDER BY m.fiscal_year ASC
+            ) AS first_shares,
+            LAST_VALUE(m.shares_outstanding_eoy) OVER (
+                PARTITION BY c.ticker ORDER BY m.fiscal_year ASC
+                ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
+            ) AS last_shares
+        FROM metrics m
+        JOIN companies c ON c.id = m.company_id
+        WHERE m.shares_outstanding_eoy IS NOT NULL
+          AND m.sbc_annual IS NOT NULL
+        ORDER BY c.ticker, m.fiscal_year
+    """)
+    dilution_rows = cur.fetchall()
+    # Deduplicate to one row per ticker
+    dilution = {}
+    for r in dilution_rows:
+        dilution[r["ticker"]] = {
+            "first_shares": r["first_shares"],
+            "last_shares": r["last_shares"],
+        }
+
+    cur.close()
+    conn.close()
+
+    # Build data for charts
+    companies_data = []
+    for r in latest:
+        sbc = float(r["sbc_annual"] or 0)
+        rev = float(r["revenue_annual"] or 0)
+        bb  = float(r["buyback_spend_annual"] or 0)
+        pct_rev = float(r["sbc_pct_revenue"] or 0)
+        growth  = float(r["revenue_growth_yoy"] or 0)
+        d = dilution.get(r["ticker"], {})
+
+        companies_data.append({
+            "ticker":       r["ticker"],
+            "name":         r["name"],
+            "sector":       r["sector"],
+            "fiscal_year":  r["fiscal_year"],
+            "sbc":          sbc,
+            "revenue":      rev,
+            "buybacks":     bb,
+            "sbc_pct_rev":  pct_rev,
+            "growth":       growth,
+            "net_dilution_burden": ((sbc - bb) / rev * 100) if rev > 0 else 0,
+            "buyback_offset": (bb / sbc * 100) if sbc > 0 else 0,
+            "sbc_efficiency": (rev / sbc) if sbc > 0 else 0,
+            "cum_dilution":   ((float(d.get("last_shares", 0)) - float(d.get("first_shares", 0)))
+                               / float(d["first_shares"]) * 100)
+                              if d.get("first_shares") and float(d["first_shares"]) > 0 else None,
+        })
+
+    import json as _json
+    return render_template("analysis.html",
+        data=_json.dumps(companies_data),
+        sector=sector,
+        min_rev=min_rev,
+        available_sectors=available_sectors,
+    )
+
+
 @app.route("/scatter")
 def scatter():
     """

@@ -7,7 +7,7 @@ Flask + PostgreSQL app tracking stock-based compensation across public tech comp
 - **Database:** PostgreSQL via psycopg2 (raw SQL, no ORM)
 - **Frontend:** Jinja2 templates, vanilla JS, Chart.js via CDN, no build step
 - **Hosting:** Railway (`railway.toml`, `Procfile`)
-- **Data source:** SEC EDGAR XBRL API (`data.sec.gov/api/xbrl/companyfacts/`)
+- **Data source:** SEC EDGAR XBRL API (`data.sec.gov/api/xbrl/companyfacts/`), edgartools library for historical ingestion
 
 ## Running locally
 ```bash
@@ -22,14 +22,17 @@ DATABASE_URL=postgresql://... python3 fetch_sbc.py
 # Single company
 DATABASE_URL=postgresql://... python3 fetch_sbc.py --ticker SNAP
 
-# Brute-force historical ingestion (slower, more thorough — enumerates every 10-K via EDGAR submissions API, falls back to HTML parsing)
+# Brute-force historical ingestion (slower, more thorough — uses edgartools to enumerate and parse 10-K filings)
 DATABASE_URL=postgresql://... python3 fetch_historical.py
 DATABASE_URL=postgresql://... python3 fetch_historical.py --ticker SNAP
 DATABASE_URL=postgresql://... python3 fetch_historical.py --force  # re-fetch even if data exists
 DATABASE_URL=postgresql://... python3 fetch_historical.py --reset-checkpoint  # clear checkpoint and start fresh
 
-# fetch_historical.py auto-validates after each company (benchmarks + sanity rules + auto-heal).
-# validate.py still works standalone for quick checks without re-fetching:
+# Backfill null shares_outstanding from EDGAR facts API
+DATABASE_URL=postgresql://... python3 enrich_shares.py
+DATABASE_URL=postgresql://... python3 enrich_shares.py --ticker META
+
+# validate.py runs standalone for checking data quality after ingestion:
 # Validate ingested data against ground-truth benchmarks + sanity rules
 DATABASE_URL=postgresql://... python3 validate.py
 DATABASE_URL=postgresql://... python3 validate.py --ticker META
@@ -53,14 +56,13 @@ Stores which XBRL tag was dynamically selected per company per concept, how many
 ## Key architecture decisions
 - **Raw SQL, no ORM** — consistent with other projects.
 - **3-layer EDGAR fetcher** — `fetch_sbc.py` tries three sources in order: (1) XBRL companyfacts API, (2) XBRL instance document from filing index, (3) HTML/XBRL inline parse. Each layer fills gaps left by the previous. XBRL instance parsing uses BeautifulSoup XML parser (more tolerant of malformed XBRL in older filings).
-- **Brute-force historical fetcher** — `fetch_historical.py` takes a different approach: enumerates every 10-K individually via EDGAR submissions API, fetches the label linkbase for human-readable XBRL labels, then uses fuzzy label matching (not just tag names) to map facts to concepts. Falls back to HTML table parsing. Saves checkpoint state to resume after crashes.
+- **Brute-force historical fetcher** — `fetch_historical.py` uses the `edgartools` library to enumerate and parse every 10-K filing (excludes 10-K/A amendments). Extracts data via `standard_concept` lookups on parsed XBRL statements (income, cash flow, balance sheet), falling back to concept name substring matching. Filters to non-breakdown rows for consolidated totals. Saves checkpoint state to resume after crashes. Prints a coverage report (ticker, year count, earliest/latest year, latest SBC/revenue) at the end.
 - **Dynamic XBRL tag discovery** — before extracting data, `discover_tags()` scores every tag in the companyfacts JSON (annual period count + us-gaap namespace bonus + hardcoded-list bonus + concept-specific bonuses) and picks the best tag per concept. Discovered tag is prepended to the hardcoded fallback list so it wins for same-period conflicts; hardcoded tags fill gaps.
 - **XBRL concept merge** — each metric (SBC, revenue, etc.) iterates a priority-ordered list of XBRL concept names and merges data across all matching concepts. Earlier concepts win for the same period; later concepts fill gaps. Handles companies that switch XBRL tags between years (e.g. Alphabet revenue).
 - **Coverage matrix** — after a full ingestion run, `print_coverage_matrix()` prints a GREEN/YELLOW/RED matrix showing % of expected annual periods filled per company × concept; flags cells below 70%.
 - **Upsert preserves existing data** — filings upsert uses `COALESCE(filings.field, EXCLUDED.field)` so existing non-null values are never overwritten. Only null fields get filled. To fix bad data: delete the company's rows first, then re-ingest.
 - **Multi-class share structures** — `extract_shares_outstanding` handles companies with multiple share classes (e.g. META Class A+B, GOOGL Class A+B+C). If no single total tag exists, sums per-class shares outstanding automatically.
 - **Validation layer** — `validate.py` checks ingested data against 20 ground-truth benchmarks (10 companies × SBC + revenue, 5-10% tolerance) and sanity rules (YoY change limits, SBC/revenue ratio bounds, magnitude floors by market cap tier). `--heal` flag nulls suspect values in the metrics table so the UI shows "—" instead of bad numbers.
-- **Prefer-larger-value heuristic** — `fetch_historical.py` uses PREFER_LARGER_VALUE for key concepts (sbc, revenue, etc.): when multiple XBRL tags match with similar scores, picks the largest absolute value since consolidated totals exceed segment subtotals. TAG_BLACKLIST excludes partial-revenue tags (e.g. OtherSalesRevenueNet).
 - **Precomputed metrics table** — ratios stored in DB, not computed on every request.
 - **EDGAR rate limit** — SEC allows ~10 req/sec; we sleep 0.5s between companies to be safe.
 - **EDGAR User-Agent required** — SEC blocks generic agents; use a descriptive User-Agent with contact email.
