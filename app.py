@@ -4,7 +4,8 @@ Tracks stock-based compensation across major public tech companies using EDGAR d
 """
 
 import os
-from flask import Flask, render_template, request
+import json
+from flask import Flask, render_template, request, jsonify
 import psycopg2
 import psycopg2.extras
 
@@ -193,6 +194,39 @@ def company(ticker):
         chart_ni=chart_ni,
         chart_unrec=chart_unrec,
     )
+
+
+@app.route("/api/debug/coverage")
+def debug_coverage():
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute("""
+        SELECT
+            c.ticker,
+            MAX(m.fiscal_year) AS most_recent_fiscal_year,
+            (SELECT m2.sbc_annual FROM metrics m2
+             WHERE m2.company_id = c.id
+             ORDER BY m2.fiscal_year DESC LIMIT 1) AS most_recent_sbc_total,
+            COUNT(m.fiscal_year) AS total_years_in_db,
+            COUNT(m.sbc_annual) AS total_years_with_sbc
+        FROM companies c
+        LEFT JOIN metrics m ON m.company_id = c.id
+        GROUP BY c.id, c.ticker
+        ORDER BY c.ticker
+    """)
+    rows = cur.fetchall()
+    cur.close()
+    conn.close()
+    return jsonify({"companies": [
+        {
+            "ticker": r["ticker"],
+            "most_recent_fiscal_year": r["most_recent_fiscal_year"],
+            "most_recent_sbc_total": float(r["most_recent_sbc_total"]) if r["most_recent_sbc_total"] else None,
+            "total_years_with_sbc": r["total_years_with_sbc"],
+            "total_years_in_db": r["total_years_in_db"],
+        }
+        for r in rows
+    ]})
 
 
 @app.route("/scatter")
