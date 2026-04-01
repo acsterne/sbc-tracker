@@ -38,6 +38,10 @@ REVENUE_CONCEPTS = [
     "Revenues",
     "RevenueFromContractWithCustomerIncludingAssessedTax",
     "SalesRevenueNet",
+    "SalesRevenueGoodsNet",
+    "SalesRevenueServicesNet",
+    "RevenueFromContractWithCustomerNetOfRefunds",
+    "OtherRevenue",
 ]
 GROSS_PROFIT_CONCEPTS = [
     "GrossProfit",
@@ -242,10 +246,10 @@ def save_filings(cur, company_id, facts):
 
 def refresh_metrics(cur, company_id):
     """
-    Compute annual rolled-up metrics from filings and upsert into metrics table.
-    Prefers 10-K data; falls back to summing 10-Q for companies with only quarterly data.
+    Compute annual metrics from 10-K filings only.
+    10-K data is authoritative — quarterly (10-Q) filings store YTD cumulative values
+    which would double-count if summed.
     """
-    # Get all annual filings for this company
     cur.execute("""
         SELECT fiscal_year,
                sbc_expense, revenue, gross_profit, net_income,
@@ -256,28 +260,11 @@ def refresh_metrics(cur, company_id):
     """, (company_id,))
     annual_rows = {r["fiscal_year"]: r for r in cur.fetchall()}
 
-    # For years missing 10-K data, sum quarterly
-    cur.execute("""
-        SELECT fiscal_year,
-               SUM(sbc_expense)         AS sbc_expense,
-               SUM(revenue)             AS revenue,
-               SUM(gross_profit)        AS gross_profit,
-               SUM(net_income)          AS net_income,
-               SUM(buyback_spend)       AS buyback_spend,
-               SUM(shares_repurchased)  AS shares_repurchased,
-               MAX(shares_outstanding)  AS shares_outstanding
-        FROM filings
-        WHERE company_id = %s AND form_type = '10-Q'
-        GROUP BY fiscal_year
-        ORDER BY fiscal_year
-    """, (company_id,))
-    quarterly_agg = {r["fiscal_year"]: r for r in cur.fetchall()}
-
-    all_years = sorted(set(annual_rows) | set(quarterly_agg))
+    all_years = sorted(annual_rows.keys())
     prev_revenue = None
 
     for yr in all_years:
-        row = annual_rows.get(yr) or quarterly_agg.get(yr)
+        row = annual_rows.get(yr)
         if not row:
             continue
 
