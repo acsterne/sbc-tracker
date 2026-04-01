@@ -557,8 +557,9 @@ def map_to_concepts(facts, fiscal_year):
 def extract_shares_outstanding(facts, fiscal_year):
     """
     Find shares outstanding at fiscal year-end from instant (point-in-time) facts.
-    Uses direct tag-name matching in priority order. Takes the value closest to
-    the fiscal year end date.
+    Uses direct tag-name matching in priority order.
+    For multi-class companies (META, GOOGL), sums Class A + Class B if no
+    single total tag is found.
     """
     fy_end_min = date(fiscal_year, 1, 1)
     fy_end_max = date(fiscal_year + 1, 3, 31)
@@ -570,24 +571,47 @@ def extract_shares_outstanding(facts, fiscal_year):
         end = f["period_end"]
         if not (fy_end_min <= end <= fy_end_max):
             continue
-        # Prefer instant (start == end) or no start
         start = f["period_start"]
         if start is not None and start != end:
-            continue  # skip duration facts — want point-in-time
+            continue  # want instant / point-in-time only
         candidates.append(f)
 
-    # Try priority tags first
+    # 1. Try priority tags (total shares outstanding)
     for tag in SHARES_TAG_PRIORITY:
         for f in candidates:
             if f["tag"] == tag:
                 return {"value": f["value"], "tag": tag, "label": f["label"],
                         "confidence": "high"}
 
-    # Fallback: any tag containing "sharesoutstanding"
+    # 2. Fallback: any tag containing "sharesoutstanding"
     for f in candidates:
         if "sharesoutstanding" in f["tag"].lower():
             return {"value": f["value"], "tag": f["tag"], "label": f["label"],
                     "confidence": "medium"}
+
+    # 3. Multi-class fallback: sum Class A + Class B + Class C shares
+    #    (META has ClassACommonStockSharesOutstanding + ClassBCommonStockSharesOutstanding,
+    #     GOOGL has Class A + Class B + Class C)
+    class_shares = {}
+    for f in candidates:
+        tag_lower = f["tag"].lower()
+        if "sharesoutstanding" not in tag_lower:
+            continue
+        for cls in ("classa", "classb", "classc", "class_a", "class_b", "class_c"):
+            if cls in tag_lower:
+                # Use the class letter as key to avoid double-counting
+                key = cls[-1]  # 'a', 'b', or 'c'
+                if key not in class_shares or f["value"] > class_shares[key]["value"]:
+                    class_shares[key] = f
+                break
+
+    if class_shares:
+        total = sum(f["value"] for f in class_shares.values())
+        tags_used = "+".join(f["tag"] for f in class_shares.values())
+        labels    = " + ".join(f["label"] for f in class_shares.values())
+        print(f"        [SHARES] multi-class sum: {total:,} from {tags_used}")
+        return {"value": total, "tag": tags_used, "label": labels,
+                "confidence": "medium"}
 
     return None
 
@@ -701,16 +725,26 @@ def process_filing(cur, company_id, ticker, cik, filing, force=False):
     period_end       = date.fromisoformat(period_end_str)
     cik_int          = int(cik)
 
-    # Skip if already have SBC data unless forced
+    # Skip only if ALL key fields are already populated
     if not force:
         cur.execute("""
-            SELECT sbc_expense FROM filings
-            WHERE company_id = %s AND fiscal_year = %s
-              AND form_type = '10-K' AND sbc_expense IS NOT NULL
+            SELECT sbc_expense, shares_outstanding, buyback_spend,
+                   revenue, net_income, operating_income, depreciation_amortization
+            FROM filings
+            WHERE company_id = %s AND fiscal_year = %s AND form_type = '10-K'
         """, (company_id, fiscal_year))
-        if cur.fetchone():
-            print(f"      FY{fiscal_year}: already have SBC — skip")
+        existing = cur.fetchone()
+        if existing and all(existing[f] is not None for f in
+                           ("sbc_expense", "shares_outstanding", "revenue",
+                            "net_income", "operating_income", "depreciation_amortization")):
+            print(f"      FY{fiscal_year}: complete — skip")
             return True
+        if existing:
+            missing = [f for f in ("sbc_expense", "shares_outstanding", "buyback_spend",
+                                   "revenue", "net_income", "operating_income",
+                                   "depreciation_amortization")
+                       if existing[f] is None]
+            print(f"      FY{fiscal_year}: filling gaps: {', '.join(missing)}")
 
     print(f"      FY{fiscal_year}  ({acc_dashed})")
 
