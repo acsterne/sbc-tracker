@@ -72,9 +72,10 @@
 <div class="card" style="margin-bottom:20px;">
     <div style="font-weight:600;margin-bottom:4px;font-size:13px;">SBC Impact on Profitability</div>
     <div style="color:var(--muted);font-size:12px;margin-bottom:16px;">
-        SBC added back to net income each year. Orange = cost absorbed by shareholders via dilution.
-        Dashed line = what earnings would be if SBC were paid in cash instead.
-        In loss years, SBC bar is shown separately from 0 to avoid stacking confusion.
+        SBC is a real cost to shareholders even though no cash leaves the company.
+        It dilutes existing shareholders by issuing new shares to employees.
+        The orange bar shows how much profit is consumed by SBC each year.
+        The dashed line shows what earnings would look like if that cost were paid in cash instead.
     </div>
     <canvas id="profitChart" height="120"></canvas>
 </div>
@@ -234,17 +235,17 @@ new Chart(document.getElementById('profitChart'), {
             {
                 label: 'GAAP Net Income ($M)',
                 data: niFloating,
-                backgroundColor: years.map((_, i) => ni[i] >= 0 ? 'rgba(99,102,241,0.75)' : 'rgba(239,68,68,0.45)'),
+                backgroundColor: years.map((_, i) => ni[i] >= 0 ? 'rgba(99,102,241,0.75)' : 'rgba(244,114,182,0.75)'),
                 order: 2,
             },
             {
-                label: 'SBC Absorbed by Shareholders ($M)',
+                label: 'Stock-Based Compensation Expense ($M)',
                 data: sbcFloating,
                 backgroundColor: 'rgba(249,115,22,0.75)',
                 order: 2,
             },
             {
-                label: 'Pre-SBC Earnings ($M)',
+                label: 'Earnings if SBC Were Paid in Cash ($M)',
                 data: preSbc,
                 type: 'line',
                 borderColor: '#6b7280',

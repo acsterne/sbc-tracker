@@ -167,7 +167,7 @@ def company(ticker):
             m.net_dilution_pct, m.sbc_per_share,
             m.revenue_growth_yoy, m.unrecognized_sbc_annual
         FROM metrics m
-        WHERE m.company_id = %s
+        WHERE m.company_id = %s AND m.sbc_annual IS NOT NULL
         ORDER BY m.fiscal_year ASC
     """, (co["id"],))
     history = cur.fetchall()
