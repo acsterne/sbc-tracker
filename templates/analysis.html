@@ -49,72 +49,66 @@
 .tab-panel.active { display: block; }
 </style>
 
-<!-- Debug info -->
-<div id="debugInfo" style="color:var(--muted);font-size:11px;margin-bottom:12px;"></div>
-
 <!-- Tab 1: Scatter -->
 <div id="tab-scatter" class="tab-panel active">
-<div class="card" style="margin-bottom:24px;">
-    <div style="font-weight:600;margin-bottom:4px;font-size:15px;">Paying for Growth</div>
-    <div style="color:var(--muted);font-size:12px;margin-bottom:20px;">
-        Each bubble shows SBC as % of revenue vs revenue growth. Bubble size = SBC dollars.
-        Companies top-left are diluting shareholders without delivering growth.
+<div class="card" style="margin-bottom:20px;">
+    <div style="font-weight:600;margin-bottom:4px;font-size:13px;">Paying for Growth</div>
+    <div style="color:var(--muted);font-size:11px;margin-bottom:12px;">
+        Bubble = SBC % revenue vs revenue growth. Size = SBC dollars. Top-left = diluting without growth.
     </div>
-    <div style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:12px;">
-        <span style="font-size:11px;color:var(--muted);">
-            <span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#8b5cf6;"></span> Mega Cap
-            <span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#3b82f6;margin-left:8px;"></span> SaaS
-            <span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#10b981;margin-left:8px;"></span> Security
-            <span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#06b6d4;margin-left:8px;"></span> Infrastructure
-            <span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#f59e0b;margin-left:8px;"></span> AI/Neo-Cloud
-            <span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#ef4444;margin-left:8px;"></span> Social/Consumer
-        </span>
+    <div style="font-size:10px;color:var(--muted);margin-bottom:8px;">
+        <span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#8b5cf6;"></span> Mega Cap
+        <span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#3b82f6;margin-left:6px;"></span> SaaS
+        <span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#10b981;margin-left:6px;"></span> Security
+        <span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#06b6d4;margin-left:6px;"></span> Infra
+        <span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#f59e0b;margin-left:6px;"></span> AI
+        <span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#ef4444;margin-left:6px;"></span> Social
     </div>
-    <canvas id="scatterChart" height="450"></canvas>
+    <canvas id="scatterChart" height="220"></canvas>
 </div>
 </div>
 
 <!-- Tab 2: Worst Offenders -->
 <div id="tab-offenders" class="tab-panel">
-<div class="card" style="margin-bottom:24px;">
-    <div style="font-weight:600;margin-bottom:4px;font-size:15px;">Worst Offenders — Net Dilution Burden</div>
-    <div style="color:var(--muted);font-size:12px;margin-bottom:20px;">
-        SBC minus buybacks as % of revenue. This is the real cost to shareholders after any buyback offset.
+<div class="card" style="margin-bottom:20px;">
+    <div style="font-weight:600;margin-bottom:4px;font-size:13px;">Worst Offenders — Net Dilution Burden</div>
+    <div style="color:var(--muted);font-size:11px;margin-bottom:12px;">
+        (SBC - Buybacks) / Revenue. The real cost to shareholders after buyback offset.
     </div>
-    <canvas id="offendersChart"></canvas>
+    <canvas id="offendersChart" height="350"></canvas>
 </div>
 </div>
 
 <!-- Tab 3: Buyback Offset -->
 <div id="tab-buyback" class="tab-panel">
-<div class="card" style="margin-bottom:24px;">
-    <div style="font-weight:600;margin-bottom:4px;font-size:15px;">Buyback Offset Ratio</div>
-    <div style="color:var(--muted);font-size:12px;margin-bottom:20px;">
-        What % of SBC expense is being returned via buybacks. 100% means buybacks fully offset dilution.
+<div class="card" style="margin-bottom:20px;">
+    <div style="font-weight:600;margin-bottom:4px;font-size:13px;">Buyback Offset Ratio</div>
+    <div style="color:var(--muted);font-size:11px;margin-bottom:12px;">
+        Buybacks / SBC %. 100% = buybacks fully offset dilution.
     </div>
-    <canvas id="buybackChart"></canvas>
+    <canvas id="buybackChart" height="350"></canvas>
 </div>
 </div>
 
 <!-- Tab 4: Cumulative Dilution -->
 <div id="tab-dilution" class="tab-panel">
-<div class="card" style="margin-bottom:24px;">
-    <div style="font-weight:600;margin-bottom:4px;font-size:15px;">Cumulative Dilution Since First 10-K</div>
-    <div style="color:var(--muted);font-size:12px;margin-bottom:20px;">
-        Total share count change since earliest data. Positive = dilution (more shares), negative = net buyback (fewer shares).
+<div class="card" style="margin-bottom:20px;">
+    <div style="font-weight:600;margin-bottom:4px;font-size:13px;">Cumulative Dilution Since First 10-K</div>
+    <div style="color:var(--muted);font-size:11px;margin-bottom:12px;">
+        Share count change. Positive = diluted, negative = net buyback.
     </div>
-    <canvas id="dilutionChart"></canvas>
+    <canvas id="dilutionChart" height="350"></canvas>
 </div>
 </div>
 
 <!-- Tab 5: SBC Efficiency -->
 <div id="tab-efficiency" class="tab-panel">
-<div class="card" style="margin-bottom:24px;">
-    <div style="font-weight:600;margin-bottom:4px;font-size:15px;">SBC Efficiency — Revenue per $1 of SBC</div>
-    <div style="color:var(--muted);font-size:12px;margin-bottom:20px;">
-        Revenue generated per $1 of SBC expense. Higher means dilution is buying more growth.
+<div class="card" style="margin-bottom:20px;">
+    <div style="font-weight:600;margin-bottom:4px;font-size:13px;">SBC Efficiency — Revenue per $1 of SBC</div>
+    <div style="color:var(--muted);font-size:11px;margin-bottom:12px;">
+        Higher = dilution buying more growth.
     </div>
-    <canvas id="efficiencyChart"></canvas>
+    <canvas id="efficiencyChart" height="350"></canvas>
 </div>
 </div>
 
@@ -127,13 +121,6 @@ const SECTOR_COLORS = {
     'Social / Consumer': '#ef4444',
 };
 const sectorColor = s => SECTOR_COLORS[s] || '#6b7280';
-
-// Debug: log data availability
-const withGrowth = RAW.filter(d => d.growth !== null && d.growth !== 0);
-const withPct    = RAW.filter(d => d.sbc_pct_rev > 0);
-const withBoth   = RAW.filter(d => d.sbc_pct_rev > 0 && d.growth !== null && d.growth !== 0);
-document.getElementById('debugInfo').textContent =
-    `${RAW.length} companies loaded | ${withPct.length} with SBC% | ${withGrowth.length} with growth% | ${withBoth.length} with both`;
 
 // ── Tab navigation ───────────────────────────────────────────────────────────
 function showTab(id, btn) {
@@ -164,13 +151,12 @@ const sbcVals = scatterData.map(d => d.sbc).filter(v => v > 0);
 const minSbc = Math.min(...sbcVals);
 const maxSbc = Math.max(...sbcVals);
 function bubbleR(sbc) {
-    if (sbc <= 0 || !maxSbc) return 8;
+    if (sbc <= 0 || !maxSbc) return 5;
     const t = (Math.sqrt(sbc) - Math.sqrt(minSbc)) / (Math.sqrt(maxSbc) - Math.sqrt(minSbc) || 1);
-    return 8 + t * 32;  // 8px min, 40px max
+    return 5 + t * 20;  // 5px min, 25px max
 }
 
-// Only label bubbles with radius > 14px (avoid clutter)
-const LABEL_MIN_R = 14;
+const LABEL_MIN_R = 10;
 
 new Chart(document.getElementById('scatterChart'), {
     type: 'bubble',
@@ -189,7 +175,6 @@ new Chart(document.getElementById('scatterChart'), {
     },
     options: {
         responsive: true,
-        maintainAspectRatio: false,
         plugins: {
             legend: { display: false },
             tooltip: {
@@ -273,9 +258,7 @@ new Chart(document.getElementById('scatterChart'), {
 // ── Horizontal bar helper ────────────────────────────────────────────────────
 function hBar(canvasId, items, valKey, colorFn, xLabel, tooltipFn) {
     const sorted = [...items].sort((a,b) => b[valKey] - a[valKey]);
-    const canvas = document.getElementById(canvasId);
-    canvas.height = Math.max(400, sorted.length * 26);
-    new Chart(canvas, {
+    new Chart(document.getElementById(canvasId), {
         type: 'bar',
         data: {
             labels: sorted.map(d => d.ticker),
@@ -283,28 +266,23 @@ function hBar(canvasId, items, valKey, colorFn, xLabel, tooltipFn) {
                 data: sorted.map(d => d[valKey]),
                 backgroundColor: sorted.map(d => colorFn(d[valKey])),
                 borderWidth: 0,
-                barThickness: 20,
             }]
         },
         options: {
             indexAxis: 'y',
             responsive: true,
-            maintainAspectRatio: false,
             plugins: {
                 legend: { display: false },
                 tooltip: {
                     callbacks: {
-                        title: ctx => {
-                            const d = sorted[ctx[0].dataIndex];
-                            return `${d.name} (${d.ticker})`;
-                        },
+                        title: ctx => sorted[ctx[0].dataIndex].name + ' (' + sorted[ctx[0].dataIndex].ticker + ')',
                         label: ctx => tooltipFn(sorted[ctx.dataIndex])
                     }
                 }
             },
             scales: {
                 x: { ...axisStyle, title: { display: true, text: xLabel, color: '#6b7280' } },
-                y: { ...axisStyle, ticks: { ...axisStyle.ticks, font: { size: 11, weight: '600' } } }
+                y: { ...axisStyle, ticks: { ...axisStyle.ticks, font: { size: 10 } } }
             }
         }
     });
