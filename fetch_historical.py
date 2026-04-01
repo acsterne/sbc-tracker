@@ -379,29 +379,43 @@ def parse_label_linkbase(xml_bytes):
 
 def _normalize(raw_text, decimals_attr):
     """
-    Convert a raw XBRL text value to an integer dollar amount.
-    XBRL values are in the declared unit (USD = base dollars).
-    The decimals attribute indicates precision only, not a scale factor.
-    Values that appear to be in millions/thousands are scaled up.
+    Convert a raw XBRL value to an integer in base dollars.
+
+    decimals="-6" → value is in millions  (multiply by 1,000,000)
+    decimals="-3" → value is in thousands (multiply by 1,000)
+    decimals="0" or "INF" or absent → value is in dollars (no scaling)
+
+    Safety cap: if scaling would produce > $10 trillion, the value was
+    probably already in base dollars (some filers do this) so we skip
+    the scaling.
     """
     try:
         val = float(raw_text.strip())
     except (ValueError, TypeError):
         return None
+    if val == 0:
+        return 0
 
-    # Plausibility guard: if the absolute value is < 1M and decimals suggests
-    # millions-scale filing, scale up (some filers put 383 for $383M revenue).
+    dec_str = (decimals_attr or "").strip()
+    if not dec_str or dec_str in ("INF", "inf"):
+        return int(val)
+
     try:
-        dec = int(decimals_attr) if decimals_attr and decimals_attr not in ("INF", "") else 0
+        dec = int(dec_str)
     except (ValueError, TypeError):
-        dec = 0
+        return int(val)
 
-    if dec <= -6 and 0 < abs(val) < 1_000_000:
-        val *= 1_000_000   # value was in millions
-    elif dec <= -3 and 0 < abs(val) < 1_000_000:
-        val *= 1_000       # value was in thousands
+    if dec >= 0:
+        return int(val)
 
-    return int(val)
+    # Negative decimals: always apply scaling
+    scaled = val * (10 ** abs(dec))
+
+    # Sanity cap — if result > $10T, value was already in base dollars
+    if abs(scaled) > 10_000_000_000_000:
+        return int(val)
+
+    return int(scaled)
 
 
 _XBRL_SKIP = ("_cal.xml", "_def.xml", "_pre.xml", "_ref.xml", "_lab.xml")
@@ -856,32 +870,32 @@ def process_filing(cur, company_id, ticker, cik, filing, force=False):
             %(accn)s, %(src)s, %(conf)s
         )
         ON CONFLICT (company_id, fiscal_year, form_type) DO UPDATE SET
-            sbc_expense               = COALESCE(EXCLUDED.sbc_expense,
-                                                 filings.sbc_expense),
-            revenue                   = COALESCE(EXCLUDED.revenue,
-                                                 filings.revenue),
-            gross_profit              = COALESCE(EXCLUDED.gross_profit,
-                                                 filings.gross_profit),
-            net_income                = COALESCE(EXCLUDED.net_income,
-                                                 filings.net_income),
-            buyback_spend             = COALESCE(EXCLUDED.buyback_spend,
-                                                 filings.buyback_spend),
-            shares_outstanding        = COALESCE(EXCLUDED.shares_outstanding,
-                                                 filings.shares_outstanding),
-            operating_income          = COALESCE(EXCLUDED.operating_income,
-                                                 filings.operating_income),
-            depreciation_amortization = COALESCE(EXCLUDED.depreciation_amortization,
-                                                 filings.depreciation_amortization),
-            ebitda                    = COALESCE(EXCLUDED.ebitda,
-                                                 filings.ebitda),
-            ebitda_source             = COALESCE(EXCLUDED.ebitda_source,
-                                                 filings.ebitda_source),
-            accession_number          = COALESCE(EXCLUDED.accession_number,
-                                                 filings.accession_number),
-            data_source               = COALESCE(EXCLUDED.data_source,
-                                                 filings.data_source),
-            confidence                = COALESCE(EXCLUDED.confidence,
-                                                 filings.confidence),
+            sbc_expense               = COALESCE(filings.sbc_expense,
+                                                 EXCLUDED.sbc_expense),
+            revenue                   = COALESCE(filings.revenue,
+                                                 EXCLUDED.revenue),
+            gross_profit              = COALESCE(filings.gross_profit,
+                                                 EXCLUDED.gross_profit),
+            net_income                = COALESCE(filings.net_income,
+                                                 EXCLUDED.net_income),
+            buyback_spend             = COALESCE(filings.buyback_spend,
+                                                 EXCLUDED.buyback_spend),
+            shares_outstanding        = COALESCE(filings.shares_outstanding,
+                                                 EXCLUDED.shares_outstanding),
+            operating_income          = COALESCE(filings.operating_income,
+                                                 EXCLUDED.operating_income),
+            depreciation_amortization = COALESCE(filings.depreciation_amortization,
+                                                 EXCLUDED.depreciation_amortization),
+            ebitda                    = COALESCE(filings.ebitda,
+                                                 EXCLUDED.ebitda),
+            ebitda_source             = COALESCE(filings.ebitda_source,
+                                                 EXCLUDED.ebitda_source),
+            accession_number          = COALESCE(filings.accession_number,
+                                                 EXCLUDED.accession_number),
+            data_source               = COALESCE(filings.data_source,
+                                                 EXCLUDED.data_source),
+            confidence                = COALESCE(filings.confidence,
+                                                 EXCLUDED.confidence),
             fetched_at                = NOW()
     """, {
         "cid":        company_id,
