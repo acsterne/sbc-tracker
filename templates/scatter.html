@@ -93,7 +93,7 @@ const sectorColors = {
     'AI / Neo-Cloud':    '#ec4899',
     'Social / Consumer': '#ef4444',
 };
-function sectorColor(s) { return sectorColors[s] || '#8892a4'; }
+function sectorColor(s) { return sectorColors[s] || '#6b7280'; }
 
 const datasets = {};
 rawPoints.forEach(p => {
@@ -114,7 +114,7 @@ new Chart(document.getElementById('scatterChart'), {
     options: {
         responsive: true,
         plugins: {
-            legend: { labels: { color: '#8892a4', font: { size: 12 }, padding: 20 } },
+            legend: { labels: { color: '#6b7280', font: { size: 12 }, padding: 20 } },
             tooltip: {
                 callbacks: {
                     label: ctx => {
@@ -126,14 +126,14 @@ new Chart(document.getElementById('scatterChart'), {
         },
         scales: {
             x: {
-                title: { display: true, text: 'Revenue Growth YoY (%)', color: '#8892a4' },
-                ticks: { color: '#8892a4', callback: v => v + '%' },
-                grid: { color: '#2a2d3a' },
+                title: { display: true, text: 'Revenue Growth YoY (%)', color: '#6b7280' },
+                ticks: { color: '#6b7280', callback: v => v + '%' },
+                grid: { color: '#e2e6ed' },
             },
             y: {
-                title: { display: true, text: 'SBC % of Revenue', color: '#8892a4' },
-                ticks: { color: '#8892a4', callback: v => v + '%' },
-                grid: { color: '#2a2d3a' },
+                title: { display: true, text: 'SBC % of Revenue', color: '#6b7280' },
+                ticks: { color: '#6b7280', callback: v => v + '%' },
+                grid: { color: '#e2e6ed' },
             }
         },
         // Draw quadrant reference lines via annotation plugin would need extra dep — skip for now
@@ -144,7 +144,7 @@ new Chart(document.getElementById('scatterChart'), {
             const ctx2 = chart.ctx;
             ctx2.save();
             ctx2.font = '11px -apple-system, sans-serif';
-            ctx2.fillStyle = '#e2e8f0';
+            ctx2.fillStyle = '#111827';
             chart.data.datasets.forEach((ds, di) => {
                 const meta = chart.getDatasetMeta(di);
                 meta.data.forEach((point, pi) => {

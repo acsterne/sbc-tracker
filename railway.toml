@@ -8,5 +8,5 @@ restartPolicyType = "on_failure"
 
 [[crons]]
 name = "fetch-sbc"
-schedule = "0 6 * * 1"   # Every Monday at 6am UTC (quarterly filings are staggered)
+schedule = "0 9 * * 5"   # Every Friday at 9am UTC
 command = "python3 fetch_sbc.py"
