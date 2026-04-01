@@ -25,6 +25,14 @@ ALTER TABLE metrics
     ADD COLUMN IF NOT EXISTS sbc_pct_ebitda NUMERIC(8,4),
     ADD COLUMN IF NOT EXISTS ebitda_negative BOOLEAN;
 
+-- Widen ratio columns from NUMERIC(8,4) to NUMERIC(12,4)
+-- NUMERIC(8,4) maxes at 9999.9999 — SBC % of EBITDA can exceed that for loss-making companies
+ALTER TABLE metrics ALTER COLUMN sbc_pct_revenue      TYPE NUMERIC(12,4);
+ALTER TABLE metrics ALTER COLUMN sbc_pct_gross_profit  TYPE NUMERIC(12,4);
+ALTER TABLE metrics ALTER COLUMN net_dilution_pct      TYPE NUMERIC(12,4);
+ALTER TABLE metrics ALTER COLUMN revenue_growth_yoy    TYPE NUMERIC(12,4);
+ALTER TABLE metrics ALTER COLUMN sbc_pct_ebitda        TYPE NUMERIC(12,4);
+
 -- Deduplicate filings: keep best row per (company_id, fiscal_year, form_type)
 -- Run BEFORE the constraint change below
 DELETE FROM filings f

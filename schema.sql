@@ -58,13 +58,13 @@ CREATE TABLE IF NOT EXISTS metrics (
     shares_outstanding_eoy  BIGINT,
 
     -- Computed ratios
-    sbc_pct_revenue         NUMERIC(8,4),           -- SBC / Revenue %
-    sbc_pct_gross_profit    NUMERIC(8,4),           -- SBC / Gross Profit %
-    net_dilution_pct        NUMERIC(8,4),           -- (SBC shares - buyback shares) / shares outstanding %
+    sbc_pct_revenue         NUMERIC(12,4),          -- SBC / Revenue %
+    sbc_pct_gross_profit    NUMERIC(12,4),          -- SBC / Gross Profit %
+    net_dilution_pct        NUMERIC(12,4),          -- (SBC shares - buyback shares) / shares outstanding %
     sbc_per_share           NUMERIC(12,4),          -- SBC expense / shares outstanding
 
     -- YoY revenue growth (filled in after at least 2 years of data)
-    revenue_growth_yoy      NUMERIC(8,4),
+    revenue_growth_yoy      NUMERIC(12,4),
 
     computed_at             TIMESTAMPTZ DEFAULT NOW(),
 
