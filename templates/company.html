@@ -61,14 +61,38 @@
     </div>
 </div>
 
-<!-- Profitability impact chart -->
-<div class="card" style="margin-bottom:32px;">
+<!-- Chart 1: SBC Profitability Impact (fixed) -->
+<div class="card" style="margin-bottom:20px;">
     <div style="font-weight:600;margin-bottom:4px;font-size:13px;">SBC Impact on Profitability</div>
     <div style="color:var(--muted);font-size:12px;margin-bottom:16px;">
-        The orange portion is SBC expense absorbed by shareholders each year.
-        The grey line shows what pre-SBC earnings would have been if SBC were paid in cash.
+        SBC added back to net income each year. Orange = cost absorbed by shareholders via dilution.
+        Dashed line = what earnings would be if SBC were paid in cash instead.
+        In loss years, SBC bar is shown separately from 0 to avoid stacking confusion.
     </div>
     <canvas id="profitChart" height="120"></canvas>
+</div>
+
+<!-- Chart 2: Dilution callout -->
+<div class="card" style="margin-bottom:20px;border-left:3px solid #ef4444;padding-left:20px;">
+    <div id="dilutionCallout" style="font-size:14px;line-height:1.7;"></div>
+</div>
+
+<!-- Chart 2: Dilution panels -->
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-bottom:32px;">
+    <div class="card">
+        <div style="font-weight:600;margin-bottom:4px;font-size:13px;">Ownership Retained Over Time</div>
+        <div style="color:var(--muted);font-size:12px;margin-bottom:16px;">
+            100 = your original ownership at the earliest data year. Net share issuance drives this down.
+        </div>
+        <canvas id="ownershipChart" height="200"></canvas>
+    </div>
+    <div class="card">
+        <div style="font-weight:600;margin-bottom:4px;font-size:13px;">Annual Gross Dilution vs Buyback Offset</div>
+        <div style="color:var(--muted);font-size:12px;margin-bottom:16px;">
+            Red = gross share issuance from SBC. Green = shares retired via buybacks. Both as % of prior-year shares.
+        </div>
+        <canvas id="dilutionChart" height="200"></canvas>
+    </div>
 </div>
 
 <!-- Historical table -->
@@ -130,16 +154,14 @@ const sbc    = {{ chart_sbc | tojson }};
 const bb     = {{ chart_bb | tojson }};
 const ni     = {{ chart_ni | tojson }};
 const unrec  = {{ chart_unrec | tojson }};
+const sharesRaw   = {{ chart_shares | tojson }};    // millions, 0 if unavailable
+const bbSharesRaw = {{ chart_bb_shares | tojson }};  // millions, 0 if unavailable
 
-const chartDefaults = {
-    responsive: true,
-    plugins: { legend: { labels: { color: '#6b7280', font: { size: 12 } } } },
-    scales: {
-        x: { ticks: { color: '#6b7280' }, grid: { color: '#e2e6ed' } },
-        y: { ticks: { color: '#6b7280' }, grid: { color: '#e2e6ed' } },
-    }
-};
+const xAxis = { ticks: { color: '#6b7280' }, grid: { color: '#e2e6ed' } };
+const yAxis = { ticks: { color: '#6b7280' }, grid: { color: '#e2e6ed' } };
+const legend = { labels: { color: '#6b7280', font: { size: 12 } } };
 
+// ── SBC % of Revenue ──────────────────────────────────────────────────────────
 new Chart(document.getElementById('pctChart'), {
     type: 'line',
     data: {
@@ -154,38 +176,43 @@ new Chart(document.getElementById('pctChart'), {
             pointRadius: 4,
         }]
     },
-    options: { ...chartDefaults, plugins: { ...chartDefaults.plugins }, scales: {
-        x: chartDefaults.scales.x,
-        y: { ...chartDefaults.scales.y, ticks: { ...chartDefaults.scales.y.ticks, callback: v => v + '%' } }
-    }}
+    options: {
+        responsive: true,
+        plugins: { legend },
+        scales: {
+            x: xAxis,
+            y: { ...yAxis, ticks: { ...yAxis.ticks, callback: v => v + '%' } }
+        }
+    }
 });
 
+// ── SBC vs Buybacks ($M) ──────────────────────────────────────────────────────
 new Chart(document.getElementById('absChart'), {
     type: 'bar',
     data: {
         labels: years,
         datasets: [
-            {
-                label: 'SBC ($M)',
-                data: sbc,
-                backgroundColor: 'rgba(239,68,68,0.7)',
-            },
-            {
-                label: 'Buybacks ($M)',
-                data: bb,
-                backgroundColor: 'rgba(34,197,94,0.7)',
-            }
+            { label: 'SBC ($M)',     data: sbc, backgroundColor: 'rgba(239,68,68,0.7)' },
+            { label: 'Buybacks ($M)', data: bb,  backgroundColor: 'rgba(34,197,94,0.7)' }
         ]
     },
-    options: { ...chartDefaults, scales: {
-        x: chartDefaults.scales.x,
-        y: { ...chartDefaults.scales.y, ticks: { ...chartDefaults.scales.y.ticks, callback: v => '$' + v + 'M' } }
-    }}
+    options: {
+        responsive: true,
+        plugins: { legend },
+        scales: {
+            x: xAxis,
+            y: { ...yAxis, ticks: { ...yAxis.ticks, callback: v => '$' + v + 'M' } }
+        }
+    }
 });
 
-// Profitability impact chart
-// pre_sbc = net_income + sbc (what earnings would be without SBC as a cost)
-const preSbc = years.map((_, i) => ni[i] + sbc[i]);
+// ── Chart 1: Profitability Impact (floating bars — handles loss years correctly) ─
+// Positive NI: blue bar 0→NI, orange bar NI→(NI+SBC)
+// Negative NI: blue bar 0→NI (down), orange bar 0→SBC (separate from zero)
+const niFloating  = years.map((_, i) => [0, ni[i]]);
+const sbcFloating = years.map((_, i) => ni[i] >= 0 ? [ni[i], ni[i] + sbc[i]] : [0, sbc[i]]);
+const preSbc      = years.map((_, i) => ni[i] + sbc[i]);
+
 new Chart(document.getElementById('profitChart'), {
     type: 'bar',
     data: {
@@ -193,15 +220,15 @@ new Chart(document.getElementById('profitChart'), {
         datasets: [
             {
                 label: 'GAAP Net Income ($M)',
-                data: ni,
-                backgroundColor: 'rgba(99,102,241,0.75)',
-                stack: 'stack',
+                data: niFloating,
+                backgroundColor: years.map((_, i) => ni[i] >= 0 ? 'rgba(99,102,241,0.75)' : 'rgba(239,68,68,0.45)'),
+                order: 2,
             },
             {
                 label: 'SBC Absorbed by Shareholders ($M)',
-                data: sbc,
+                data: sbcFloating,
                 backgroundColor: 'rgba(249,115,22,0.75)',
-                stack: 'stack',
+                order: 2,
             },
             {
                 label: 'Pre-SBC Earnings ($M)',
@@ -212,26 +239,165 @@ new Chart(document.getElementById('profitChart'), {
                 pointRadius: 3,
                 fill: false,
                 tension: 0.2,
-                stack: undefined,
+                order: 1,
             }
         ]
     },
     options: {
         responsive: true,
         plugins: {
-            legend: { labels: { color: '#6b7280', font: { size: 12 } } },
+            legend,
             tooltip: {
                 callbacks: {
-                    label: ctx => `${ctx.dataset.label}: $${ctx.parsed.y.toFixed(0)}M`
+                    label: ctx => {
+                        const raw = ctx.raw;
+                        const val = Array.isArray(raw) ? raw[1] : (typeof raw === 'number' ? raw : 0);
+                        return `${ctx.dataset.label}: $${val.toFixed(0)}M`;
+                    }
                 }
             }
         },
         scales: {
-            x: { ticks: { color: '#6b7280' }, grid: { color: '#e2e6ed' }, stacked: true },
+            x: xAxis,
+            y: { ...yAxis, ticks: { ...yAxis.ticks, callback: v => '$' + v + 'M' } }
+        }
+    }
+});
+
+// ── Chart 2: Dilution Impact ──────────────────────────────────────────────────
+
+// Find valid share data range
+const validIdxs  = sharesRaw.map((s, i) => s > 0 ? i : -1).filter(i => i >= 0);
+const baseIdx    = validIdxs.length > 0 ? validIdxs[0] : -1;
+const lastIdx    = validIdxs.length > 0 ? validIdxs[validIdxs.length - 1] : -1;
+const baseShares = baseIdx >= 0 ? sharesRaw[baseIdx] : 0;
+const lastShares = lastIdx >= 0 ? sharesRaw[lastIdx] : 0;
+const baseYear   = baseIdx >= 0 ? years[baseIdx] : null;
+
+// Callout stats
+const totalBBShr = bbSharesRaw.reduce((a, b) => a + b, 0);
+const netLoss    = baseShares > 0 && lastShares > 0 ? +((1 - baseShares / lastShares) * 100).toFixed(1) : null;
+const bbOffset   = baseShares > 0 ? +(totalBBShr / baseShares * 100).toFixed(1) : null;
+const sbcDil     = netLoss !== null && bbOffset !== null ? +(netLoss + bbOffset).toFixed(1) : null;
+
+const callout = document.getElementById('dilutionCallout');
+if (sbcDil !== null) {
+    callout.innerHTML =
+        `<strong>Since ${baseYear}, SBC has diluted your ownership by ~${sbcDil}%. ` +
+        `Buybacks have offset ~${bbOffset}%. ` +
+        `Net ownership loss: ${netLoss}%.</strong>`;
+} else {
+    callout.innerHTML = '<em style="color:var(--muted)">Share count data not available for dilution analysis.</em>';
+}
+
+// Ownership index per year (null if no data)
+const ownershipIdx = years.map((_, i) =>
+    sharesRaw[i] > 0 ? +(baseShares / sharesRaw[i] * 100).toFixed(1) : null
+);
+
+// Per-year gross SBC dilution and buyback offset (both as % of prior-year shares)
+const grossSbcPct = years.map((_, i) => {
+    if (i === 0 || sharesRaw[i] <= 0 || sharesRaw[i - 1] <= 0) return null;
+    const netChg  = (sharesRaw[i] - sharesRaw[i - 1]) / sharesRaw[i - 1] * 100;
+    const bbOff   = bbSharesRaw[i] > 0 ? bbSharesRaw[i] / sharesRaw[i - 1] * 100 : 0;
+    const gross   = netChg + bbOff;
+    return gross > 0 ? +gross.toFixed(2) : 0;
+});
+
+const bbPct = years.map((_, i) => {
+    if (i === 0 || sharesRaw[i - 1] <= 0 || bbSharesRaw[i] <= 0) return null;
+    return +(bbSharesRaw[i] / sharesRaw[i - 1] * 100).toFixed(2);
+});
+
+// Left panel: ownership area chart
+new Chart(document.getElementById('ownershipChart'), {
+    type: 'line',
+    data: {
+        labels: years,
+        datasets: [
+            {
+                label: 'Your ownership (%)',
+                data: ownershipIdx,
+                borderColor: '#ef4444',
+                backgroundColor: 'rgba(239,68,68,0.1)',
+                fill: true,
+                tension: 0.3,
+                pointRadius: 4,
+                spanGaps: true,
+            },
+            {
+                label: 'Baseline (no dilution)',
+                data: years.map(() => 100),
+                borderColor: '#9ca3af',
+                borderDash: [4, 4],
+                borderWidth: 1.5,
+                pointRadius: 0,
+                fill: false,
+            }
+        ]
+    },
+    options: {
+        responsive: true,
+        plugins: {
+            legend,
+            tooltip: {
+                callbacks: {
+                    label: ctx => ctx.parsed.y !== null ? `${ctx.dataset.label}: ${ctx.parsed.y.toFixed(1)}%` : ''
+                }
+            }
+        },
+        scales: {
+            x: xAxis,
             y: {
-                ticks: { color: '#6b7280', callback: v => '$' + v + 'M' },
-                grid: { color: '#e2e6ed' },
-                stacked: true,
+                ...yAxis,
+                suggestedMin: 60,
+                suggestedMax: 105,
+                ticks: { ...yAxis.ticks, callback: v => v + '%' }
+            }
+        }
+    }
+});
+
+// Right panel: gross dilution (red, negative) vs buyback offset (green, positive)
+new Chart(document.getElementById('dilutionChart'), {
+    type: 'bar',
+    data: {
+        labels: years,
+        datasets: [
+            {
+                label: 'Gross SBC Dilution (%)',
+                data: grossSbcPct.map(v => v !== null && v > 0 ? [0, -v] : null),
+                backgroundColor: 'rgba(239,68,68,0.7)',
+            },
+            {
+                label: 'Buyback Offset (%)',
+                data: bbPct.map(v => v !== null ? [0, v] : null),
+                backgroundColor: 'rgba(34,197,94,0.7)',
+            }
+        ]
+    },
+    options: {
+        responsive: true,
+        plugins: {
+            legend,
+            tooltip: {
+                callbacks: {
+                    label: ctx => {
+                        const raw = ctx.raw;
+                        if (Array.isArray(raw)) return `${ctx.dataset.label}: ${Math.abs(raw[1]).toFixed(2)}%`;
+                        return '';
+                    }
+                }
+            }
+        },
+        scales: {
+            x: xAxis,
+            y: {
+                ...yAxis,
+                ticks: {
+                    ...yAxis.ticks,
+                    callback: v => (v > 0 ? '+' : '') + v.toFixed(1) + '%'
+                }
             }
         }
     }

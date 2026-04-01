@@ -180,6 +180,8 @@ def company(ticker):
     chart_bb        = [float(r["buyback_spend_annual"] or 0) / 1e6 for r in history]
     chart_ni        = [float(r["net_income_annual"] or 0) / 1e6 for r in history]
     chart_unrec     = [float(r["unrecognized_sbc_annual"] or 0) / 1e6 for r in history]
+    chart_shares    = [float(r["shares_outstanding_eoy"] or 0) / 1e6 for r in history]
+    chart_bb_shares = [float(r["shares_repurchased_annual"] or 0) / 1e6 for r in history]
 
     cur.close()
     conn.close()
@@ -194,6 +196,8 @@ def company(ticker):
         chart_bb=chart_bb,
         chart_ni=chart_ni,
         chart_unrec=chart_unrec,
+        chart_shares=chart_shares,
+        chart_bb_shares=chart_bb_shares,
     )
 
 
