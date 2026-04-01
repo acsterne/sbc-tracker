@@ -31,6 +31,7 @@ DATABASE_URL=postgresql://... python3 fetch_historical.py --reset-checkpoint  # 
 # Backfill null shares_outstanding from EDGAR facts API
 DATABASE_URL=postgresql://... python3 enrich_shares.py
 DATABASE_URL=postgresql://... python3 enrich_shares.py --ticker META
+DATABASE_URL=postgresql://... python3 enrich_shares.py --force  # overwrite existing shares values (needed to apply split adjustments)
 
 # validate.py runs standalone for checking data quality after ingestion:
 # Validate ingested data against ground-truth benchmarks + sanity rules
@@ -62,6 +63,7 @@ Stores which XBRL tag was dynamically selected per company per concept, how many
 - **Coverage matrix** — after a full ingestion run, `print_coverage_matrix()` prints a GREEN/YELLOW/RED matrix showing % of expected annual periods filled per company × concept; flags cells below 70%.
 - **Upsert preserves existing data** — filings upsert uses `COALESCE(filings.field, EXCLUDED.field)` so existing non-null values are never overwritten. Only null fields get filled. To fix bad data: delete the company's rows first, then re-ingest.
 - **Multi-class share structures** — `extract_shares_outstanding` handles companies with multiple share classes (e.g. META Class A+B, GOOGL Class A+B+C). If no single total tag exists, sums per-class shares outstanding automatically.
+- **Stock split adjustments** — `enrich_shares.py` normalizes historical shares outstanding for known stock splits (AMZN 20:1 2022, GOOGL 20:1 2022, TSLA 3:1 2022, AAPL 4:1 2020 + 7:1 2014). Pre-split values are multiplied so the entire time series is comparable.
 - **Validation layer** — `validate.py` checks ingested data against 20 ground-truth benchmarks (10 companies × SBC + revenue, 5-10% tolerance) and sanity rules (YoY change limits, SBC/revenue ratio bounds, magnitude floors by market cap tier). `--heal` flag nulls suspect values in the metrics table so the UI shows "—" instead of bad numbers.
 - **Precomputed metrics table** — ratios stored in DB, not computed on every request.
 - **EDGAR rate limit** — SEC allows ~10 req/sec; we sleep 0.5s between companies to be safe.
@@ -73,6 +75,7 @@ Stores which XBRL tag was dynamically selected per company per concept, how many
 | `/` | Leaderboard — all companies, latest year, sortable by any metric, filterable by ticker/name |
 | `/company/<ticker>` | Company detail — historical charts (profitability, dilution/ownership) + year-by-year table |
 | `/scatter` | Scatter plot: SBC % Revenue (Y) vs Revenue Growth (X) |
+| `/analysis` | Cross-company analysis — 5 tabbed charts (Paying for Growth, Worst Offenders, Buyback Offset, Cumulative Dilution, SBC Efficiency) with sector/revenue filters |
 | `/api/debug/coverage` | JSON: per-company data coverage (most recent year, years with SBC data) |
 
 ## Adding companies
