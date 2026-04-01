@@ -6,7 +6,3 @@ startCommand = "gunicorn app:app"
 healthcheckPath = "/"
 restartPolicyType = "on_failure"
 
-[[crons]]
-name = "fetch-sbc"
-schedule = "0 9 * * 5"   # Every Friday at 9am UTC
-command = "python3 fetch_sbc.py"
