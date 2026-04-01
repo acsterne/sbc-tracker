@@ -29,10 +29,10 @@ DATABASE_URL=postgresql://... python3 fetch_sbc.py --ticker SNAP
 Master list of tracked companies — ticker, name, CIK (SEC identifier), sector, IPO year.
 
 ### `filings`
-One row per company per period (annual 10-K and quarterly 10-Q). Raw financials: SBC expense, revenue, gross profit, net income, shares outstanding, shares repurchased, buyback spend. Also stores SBC by function (sbc_cogs, sbc_rd, sbc_sm, sbc_ga), unrecognized_sbc (future expense from unvested awards), data_source, and confidence. Indexed by (company_id, period_end, form_type).
+One row per company per period (annual 10-K and quarterly 10-Q). Raw financials: SBC expense, revenue, gross profit, net income, shares outstanding, shares repurchased, buyback spend. Also stores SBC by function (sbc_cogs, sbc_rd, sbc_sm, sbc_ga), unrecognized_sbc (future expense from unvested awards), ebitda (plus operating_income and depreciation_amortization components for auditability), data_source, and confidence. Indexed by (company_id, period_end, form_type).
 
 ### `metrics`
-Annual metrics computed from 10-K filings only (10-Q data is YTD cumulative and would double-count if summed). Stores pre-computed ratios: sbc_pct_revenue, sbc_pct_gross_profit, net_dilution_pct, sbc_per_share, revenue_growth_yoy, unrecognized_sbc_annual. Refreshed by `fetch_sbc.py` after each fetch. Unique on (company_id, fiscal_year).
+Annual metrics computed from 10-K filings only (10-Q data is YTD cumulative and would double-count if summed). Stores pre-computed ratios: sbc_pct_revenue, sbc_pct_ebitda (replaces sbc_pct_gross_profit), ebitda_negative flag, net_dilution_pct, sbc_per_share, revenue_growth_yoy, unrecognized_sbc_annual. Refreshed by `fetch_sbc.py` after each fetch. Unique on (company_id, fiscal_year).
 
 ## Key architecture decisions
 - **Raw SQL, no ORM** — consistent with other projects.
@@ -46,7 +46,7 @@ Annual metrics computed from 10-K filings only (10-Q data is YTD cumulative and 
 | Path | Purpose |
 |---|---|
 | `/` | Leaderboard — all companies, latest year, sortable by any metric |
-| `/company/<ticker>` | Company detail — historical chart + year-by-year table |
+| `/company/<ticker>` | Company detail — historical charts (profitability, dilution/ownership) + year-by-year table |
 | `/scatter` | Scatter plot: SBC % Revenue (Y) vs Revenue Growth (X) |
 | `/api/debug/coverage` | JSON: per-company data coverage (most recent year, years with SBC data) |
 

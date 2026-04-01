@@ -24,3 +24,17 @@ ALTER TABLE metrics
     ADD COLUMN IF NOT EXISTS ebitda_annual BIGINT,
     ADD COLUMN IF NOT EXISTS sbc_pct_ebitda NUMERIC(8,4),
     ADD COLUMN IF NOT EXISTS ebitda_negative BOOLEAN;
+
+-- Dynamic tag discovery (run after EBITDA migrations above)
+CREATE TABLE IF NOT EXISTS company_tags (
+    id              SERIAL PRIMARY KEY,
+    company_id      INT NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+    concept         TEXT NOT NULL,   -- 'sbc', 'revenue', 'gross_profit', 'net_income',
+                                     --   'operating_income', 'da', 'buybacks'
+    tag_used        TEXT,            -- XBRL tag name selected, e.g. 'ShareBasedCompensation'
+    namespace       TEXT,            -- 'us-gaap' or extension namespace
+    periods_found   INT DEFAULT 0,   -- actual 10-K periods extracted after merge
+    source          TEXT DEFAULT 'dynamic',  -- 'dynamic', 'hardcoded_only', 'needs_html_parse'
+    discovered_at   TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE(company_id, concept)
+);

@@ -82,6 +82,17 @@ DA_CONCEPTS = [
     "Depreciation",
 ]
 
+# Maps concept name → hardcoded fallback list (used as safety net after dynamic discovery)
+HARDCODED_FALLBACKS = {
+    "sbc":              SBC_CONCEPTS,
+    "revenue":          REVENUE_CONCEPTS,
+    "gross_profit":     GROSS_PROFIT_CONCEPTS,
+    "net_income":       NET_INCOME_CONCEPTS,
+    "buybacks":         BUYBACK_SPEND_CONCEPTS,
+    "operating_income": OPERATING_INCOME_CONCEPTS,
+    "da":               DA_CONCEPTS,
+}
+
 
 # ── Request utilities ────────────────────────────────────────────────────────
 
@@ -216,18 +227,190 @@ def _extract_shares_merged(facts, concepts):
     return {}, {}
 
 
+# ── Dynamic tag discovery ─────────────────────────────────────────────────────
+
+def _count_10k_periods(entries):
+    """Count distinct fiscal years with 10-K data at or after START_YEAR."""
+    years_seen = set()
+    for e in entries:
+        if e.get("form") == "10-K" and e.get("val") is not None and e.get("end"):
+            yr = int(e["end"][:4])
+            if yr >= START_YEAR:
+                years_seen.add(yr)
+    return len(years_seen)
+
+
+def _tag_matches_concept(tag, concept):
+    """
+    Check if a tag name satisfies inclusion/exclusion rules for a concept.
+    Returns (matches: bool, bonus_score: int).
+    """
+    t = tag.lower()
+
+    if concept == "sbc":
+        if not any(kw in t for kw in ["sharebased", "stockbased", "compensation"]):
+            return False, 0
+        if any(kw in t for kw in ["nonvested", "unrecognized", "fairvalue", "weighted", "deferred"]):
+            return False, 0
+        return True, 0
+
+    elif concept == "revenue":
+        if not any(kw in t for kw in ["revenue", "sales", "turnover"]):
+            return False, 0
+        for excl in ["costof", "deferred", "unearned", "backlog", "remaining"]:
+            if excl in t:
+                return False, 0
+        # "contract" is only ok when the tag also contains "revenue"
+        if "contract" in t and "revenue" not in t:
+            return False, 0
+        return True, 0
+
+    elif concept == "operating_income":
+        if any(kw in t for kw in ["operatingincome", "operatingloss", "operatingprofit"]):
+            return True, 0
+        if "incomeloss" in t and "continuingoperation" in t and "beforeincometax" in t:
+            return True, 0
+        return False, 0
+
+    elif concept == "da":
+        if "depreciation" not in t:
+            return False, 0
+        # Exclude balance-sheet accumulated D&A, right-of-use, lease items
+        if any(kw in t for kw in ["accumulated", "propertyplant", "rightofuse", "financelease"]):
+            return False, 0
+        bonus = 2 if "amortization" in t else 0
+        return True, bonus
+
+    elif concept == "net_income":
+        if any(kw in t for kw in ["netincome", "profitloss"]):
+            return True, 0
+        return False, 0
+
+    elif concept == "buybacks":
+        has_repurchase = "repurchase" in t
+        has_treasury_stock = "treasury" in t and "stock" in t
+        return has_repurchase or has_treasury_stock, 0
+
+    elif concept == "gross_profit":
+        return "grossprofit" in t, 0
+
+    return False, 0
+
+
+def discover_tags(facts):
+    """
+    Dynamically score every XBRL tag in the companyfacts JSON and pick the
+    best tag per concept.  Dynamic discovery runs first; hardcoded lists serve
+    as the safety net when results are ambiguous.
+
+    Scoring (higher = better):
+      + annual 10-K period count   (primary signal)
+      + 2  if tag is in us-gaap namespace (vs extension)
+      + 5  if tag already appears in our hardcoded fallback list
+      + 0-2 bonus per concept-specific rules (e.g. D&A with Amortization)
+
+    Returns:
+      dict keyed by concept name: {"tag", "namespace", "periods", "score"} | None
+    """
+    CONCEPTS = ["sbc", "revenue", "gross_profit", "net_income",
+                "operating_income", "da", "buybacks"]
+
+    candidates_by_concept = {c: [] for c in CONCEPTS}
+
+    for ns, tags in facts.get("facts", {}).items():
+        for tag, tag_data in tags.items():
+            for unit, entries in tag_data.get("units", {}).items():
+                if unit != "USD":
+                    continue  # shares-unit concepts handled separately
+                t_lower = tag.lower()
+                for concept in CONCEPTS:
+                    matches, bonus = _tag_matches_concept(t_lower, concept)
+                    if not matches:
+                        continue
+                    n_periods = _count_10k_periods(entries)
+                    if n_periods == 0:
+                        continue
+                    score = n_periods + bonus
+                    if ns == "us-gaap":
+                        score += 2
+                    if tag in HARDCODED_FALLBACKS.get(concept, []):
+                        score += 5
+                    candidates_by_concept[concept].append((score, n_periods, ns, tag))
+
+    results = {}
+    for concept, candidates in candidates_by_concept.items():
+        if not candidates:
+            results[concept] = None
+            continue
+        candidates.sort(reverse=True)
+        best_score, best_periods, best_ns, best_tag = candidates[0]
+        results[concept] = {
+            "tag": best_tag, "namespace": best_ns,
+            "periods": best_periods, "score": best_score,
+        }
+        # Log when discovery picks something different from the hardcoded top choice
+        hardcoded_top = HARDCODED_FALLBACKS.get(concept, [None])[0]
+        if best_tag != hardcoded_top:
+            print(f"      [DISC] {concept}: '{best_tag}' ({best_periods}p) "
+                  f"over hardcoded '{hardcoded_top}'")
+
+    return results
+
+
+def save_discovered_tags(cur, company_id, discovered, actual_periods=None):
+    """Upsert the discovered tag info for each concept into company_tags."""
+    for concept, info in discovered.items():
+        if info is None:
+            source, tag, ns, periods = "needs_html_parse", None, None, 0
+        else:
+            source = "dynamic"
+            tag    = info["tag"]
+            ns     = info["namespace"]
+            periods = (actual_periods or {}).get(concept, info["periods"])
+        cur.execute("""
+            INSERT INTO company_tags
+                (company_id, concept, tag_used, namespace, periods_found, source)
+            VALUES
+                (%(cid)s, %(concept)s, %(tag)s, %(ns)s, %(periods)s, %(source)s)
+            ON CONFLICT (company_id, concept) DO UPDATE SET
+                tag_used      = EXCLUDED.tag_used,
+                namespace     = EXCLUDED.namespace,
+                periods_found = EXCLUDED.periods_found,
+                source        = EXCLUDED.source,
+                discovered_at = NOW()
+        """, {"cid": company_id, "concept": concept, "tag": tag,
+              "ns": ns, "periods": periods, "source": source})
+
+
 def layer1_save_filings(cur, company_id, facts):
     """Parse Layer 1 facts and upsert filing rows. Returns set of fiscal years with SBC."""
-    sbc_ann, sbc_qtd     = _extract_merged(facts, SBC_CONCEPTS)
-    rev_ann, rev_qtd     = _extract_merged(facts, REVENUE_CONCEPTS)
-    gp_ann, _            = _extract_merged(facts, GROSS_PROFIT_CONCEPTS)
-    ni_ann, _            = _extract_merged(facts, NET_INCOME_CONCEPTS)
-    bb_ann, _            = _extract_merged(facts, BUYBACK_SPEND_CONCEPTS)
+    # Dynamic tag discovery — prepend best discovered tag to each hardcoded list
+    discovered = discover_tags(facts)
+
+    def _concepts(concept, hardcoded):
+        info = discovered.get(concept)
+        if info:
+            tag = info["tag"]
+            return [tag] + [c for c in hardcoded if c != tag]
+        return hardcoded
+
+    sbc_ann, sbc_qtd     = _extract_merged(facts, _concepts("sbc",              SBC_CONCEPTS))
+    rev_ann, rev_qtd     = _extract_merged(facts, _concepts("revenue",          REVENUE_CONCEPTS))
+    gp_ann, _            = _extract_merged(facts, _concepts("gross_profit",     GROSS_PROFIT_CONCEPTS))
+    ni_ann, _            = _extract_merged(facts, _concepts("net_income",       NET_INCOME_CONCEPTS))
+    bb_ann, _            = _extract_merged(facts, _concepts("buybacks",         BUYBACK_SPEND_CONCEPTS))
     shr_ann, _           = _extract_shares_merged(facts, SHARES_CONCEPTS)
     shrep_ann, _         = _extract_shares_merged(facts, SHARES_REPURCHASED_CONCEPTS)
     unrec_ann, _         = _extract_merged(facts, UNRECOGNIZED_SBC_CONCEPTS)
-    oi_ann, _            = _extract_merged(facts, OPERATING_INCOME_CONCEPTS)
-    da_ann, _            = _extract_merged(facts, DA_CONCEPTS)
+    oi_ann, _            = _extract_merged(facts, _concepts("operating_income", OPERATING_INCOME_CONCEPTS))
+    da_ann, _            = _extract_merged(facts, _concepts("da",               DA_CONCEPTS))
+
+    # Capture actual extracted period counts and persist to company_tags
+    save_discovered_tags(cur, company_id, discovered, {
+        "sbc": len(sbc_ann), "revenue": len(rev_ann), "gross_profit": len(gp_ann),
+        "net_income": len(ni_ann), "buybacks": len(bb_ann),
+        "operating_income": len(oi_ann), "da": len(da_ann),
+    })
 
     all_annual = set(sbc_ann) | set(rev_ann) | set(gp_ann) | set(ni_ann) | set(bb_ann) | set(shr_ann)
     years_with_sbc = set()
@@ -604,6 +787,90 @@ def print_coverage_report(coverage):
     print("="*60)
 
 
+def print_coverage_matrix(cur):
+    """
+    Print a matrix: companies × concepts showing % of expected annual periods filled.
+    GREEN ≥90%  YELLOW 70-89%  RED <70%
+    Expected = years from max(START_YEAR, IPO year) to the latest year in metrics.
+    """
+    # Gracefully skip if company_tags table doesn't exist yet
+    try:
+        cur.execute("SELECT 1 FROM company_tags LIMIT 1")
+    except Exception:
+        print("\n[INFO] company_tags table not found — run schema_migrations.sql first")
+        return
+
+    cur.execute("""
+        SELECT c.ticker, c.ipo_year,
+               ct.concept, ct.periods_found, ct.tag_used, ct.source
+        FROM company_tags ct
+        JOIN companies c ON c.id = ct.company_id
+        ORDER BY c.ticker, ct.concept
+    """)
+    tag_rows = cur.fetchall()
+
+    # Latest fiscal year across all metrics (used as upper bound for expected)
+    cur.execute("SELECT COALESCE(MAX(fiscal_year), %s) AS max_yr FROM metrics", (START_YEAR,))
+    max_yr = cur.fetchone()["max_yr"]
+
+    # Organise by ticker
+    by_ticker = {}
+    ipo_by_ticker = {}
+    for r in tag_rows:
+        t = r["ticker"]
+        if t not in by_ticker:
+            by_ticker[t] = {}
+            ipo_by_ticker[t] = r["ipo_year"] or START_YEAR
+        by_ticker[t][r["concept"]] = {
+            "periods": r["periods_found"] or 0,
+            "tag":     r["tag_used"],
+            "source":  r["source"],
+        }
+
+    CONCEPTS = ["sbc", "revenue", "operating_income", "da", "net_income", "buybacks"]
+    LABELS   = ["SBC", "Revenue", "OpIncome", "D&A", "NetIncome", "Buybacks"]
+
+    RED, YEL, GRN, RST = "\033[91m", "\033[93m", "\033[92m", "\033[0m"
+
+    width = 10
+    print("\n" + "=" * (8 + width * len(CONCEPTS)))
+    print("COVERAGE MATRIX  (% of expected annual 10-K periods filled)")
+    print("GREEN ≥90%  YELLOW 70-89%  RED <70%")
+    print("-" * (8 + width * len(CONCEPTS)))
+    print(f"{'Ticker':<8}" + "".join(f"{lbl:>{width}}" for lbl in LABELS))
+    print("-" * (8 + width * len(CONCEPTS)))
+
+    flagged = []
+    for ticker in sorted(by_ticker):
+        ipo  = max(ipo_by_ticker[ticker] or START_YEAR, START_YEAR)
+        expected = max(1, max_yr - ipo + 1)
+        data = by_ticker[ticker]
+
+        row_str = f"{ticker:<8}"
+        for concept, lbl in zip(CONCEPTS, LABELS):
+            info    = data.get(concept, {"periods": 0, "source": "missing"})
+            periods = info["periods"]
+            pct     = min(100, periods / expected * 100)
+            val     = f"{pct:.0f}%"
+            if pct >= 90:
+                row_str += f"{GRN}{val:>{width}}{RST}"
+            elif pct >= 70:
+                row_str += f"{YEL}{val:>{width}}{RST}"
+            else:
+                row_str += f"{RED}{val:>{width}}{RST}"
+                flagged.append((ticker, concept, periods, expected, info.get("tag")))
+        print(row_str)
+
+    print("=" * (8 + width * len(CONCEPTS)))
+
+    if flagged:
+        print("\nFLAGGED — <70% coverage (ticker / concept / periods / expected / tag):")
+        for ticker, concept, periods, expected, tag in flagged:
+            print(f"  {ticker:<6} {concept:<18} {periods:>3}/{expected:<3}  tag={tag or 'none'}")
+
+    print()
+
+
 # ── Main orchestrator ────────────────────────────────────────────────────────
 
 def fetch_company(cur, company, ticker_filter=None):
@@ -689,6 +956,9 @@ def main():
 
     if all_coverage:
         print_coverage_report(all_coverage)
+
+    # Coverage matrix — reads from company_tags table populated during ingestion
+    print_coverage_matrix(cur)
 
     cur.close()
     conn.close()
