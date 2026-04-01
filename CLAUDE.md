@@ -36,7 +36,7 @@ Annual metrics computed from 10-K filings only (10-Q data is YTD cumulative and 
 
 ## Key architecture decisions
 - **Raw SQL, no ORM** — consistent with other projects.
-- **XBRL concept fallback chain** — each metric (SBC, revenue, etc.) tries a priority-ordered list of XBRL concept names since companies use different tags.
+- **XBRL concept merge** — each metric (SBC, revenue, etc.) iterates a priority-ordered list of XBRL concept names and merges data across all matching concepts. Earlier concepts win for the same period; later concepts fill gaps. Handles companies that switch XBRL tags between years (e.g. Alphabet revenue).
 - **Precomputed metrics table** — ratios stored in DB, not computed on every request.
 - **EDGAR rate limit** — SEC allows ~10 req/sec; we sleep 0.5s between companies to be safe.
 - **EDGAR User-Agent required** — SEC blocks generic agents; use a descriptive User-Agent with contact email.

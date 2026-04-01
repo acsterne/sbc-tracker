@@ -163,7 +163,7 @@ def company(ticker):
             m.shares_outstanding_eoy, m.shares_repurchased_annual,
             m.sbc_pct_revenue, m.sbc_pct_gross_profit,
             m.net_dilution_pct, m.sbc_per_share,
-            m.revenue_growth_yoy
+            m.revenue_growth_yoy, m.unrecognized_sbc_annual
         FROM metrics m
         WHERE m.company_id = %s
         ORDER BY m.fiscal_year ASC
@@ -171,11 +171,13 @@ def company(ticker):
     history = cur.fetchall()
 
     # Data for chart.js — serialize to lists
-    chart_years  = [r["fiscal_year"] for r in history]
-    chart_sbc    = [float(r["sbc_annual"] or 0) / 1e6 for r in history]   # in $M
-    chart_rev    = [float(r["revenue_annual"] or 0) / 1e6 for r in history]
-    chart_pct    = [float(r["sbc_pct_revenue"] or 0) for r in history]
-    chart_bb     = [float(r["buyback_spend_annual"] or 0) / 1e6 for r in history]
+    chart_years     = [r["fiscal_year"] for r in history]
+    chart_sbc       = [float(r["sbc_annual"] or 0) / 1e6 for r in history]
+    chart_rev       = [float(r["revenue_annual"] or 0) / 1e6 for r in history]
+    chart_pct       = [float(r["sbc_pct_revenue"] or 0) for r in history]
+    chart_bb        = [float(r["buyback_spend_annual"] or 0) / 1e6 for r in history]
+    chart_ni        = [float(r["net_income_annual"] or 0) / 1e6 for r in history]
+    chart_unrec     = [float(r["unrecognized_sbc_annual"] or 0) / 1e6 for r in history]
 
     cur.close()
     conn.close()
@@ -188,6 +190,8 @@ def company(ticker):
         chart_rev=chart_rev,
         chart_pct=chart_pct,
         chart_bb=chart_bb,
+        chart_ni=chart_ni,
+        chart_unrec=chart_unrec,
     )
 
 
