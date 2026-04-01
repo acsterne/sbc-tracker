@@ -25,7 +25,7 @@ COMPANIES = [
     {"ticker": "ZS",    "name": "Zscaler",            "cik": "0001713683",  "sector": "SaaS", "ipo_year": 2018},
     {"ticker": "HUBS",  "name": "HubSpot",            "cik": "0001404655",  "sector": "SaaS", "ipo_year": 2014},
     {"ticker": "OKTA",  "name": "Okta",               "cik": "0001660134",  "sector": "SaaS", "ipo_year": 2017},
-    {"ticker": "VEEV",  "name": "Veeva Systems",      "cik": "0001372514",  "sector": "SaaS", "ipo_year": 2013},
+    {"ticker": "VEEV",  "name": "Veeva Systems",      "cik": "0001393052",  "sector": "SaaS", "ipo_year": 2013},
     {"ticker": "CFLT",  "name": "Confluent",          "cik": "0001764046",  "sector": "SaaS", "ipo_year": 2021},
     {"ticker": "GTLB",  "name": "GitLab",             "cik": "0001653558",  "sector": "SaaS", "ipo_year": 2021},
     {"ticker": "ESTC",  "name": "Elastic",            "cik": "0001707753",  "sector": "SaaS", "ipo_year": 2018},

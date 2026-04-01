@@ -95,11 +95,16 @@ def fetch_company_facts(cik):
 
 def extract_concept(facts, concepts, unit="USD"):
     """
-    Given a list of concept names (in priority order), return a dict of
-    {period_end_date_str: value} for annual (10-K) and quarterly (10-Q) filings.
+    Merges data across all concept names so every period_end gets the best available value.
+    Priority order: earlier concepts win for the same period, but later concepts fill gaps.
+    This handles companies that switch XBRL tags between years (e.g. Alphabet revenue).
     Returns (annual_dict, quarterly_dict).
     """
     us_gaap = facts.get("facts", {}).get("us-gaap", {})
+    annual = {}
+    quarterly = {}
+    matched = []
+
     for concept in concepts:
         if concept not in us_gaap:
             continue
@@ -108,8 +113,7 @@ def extract_concept(facts, concepts, unit="USD"):
         if unit not in units:
             continue
         entries = units[unit]
-        annual = {}
-        quarterly = {}
+        concept_had_data = False
         for e in entries:
             form = e.get("form", "")
             end = e.get("end", "")
@@ -120,22 +124,24 @@ def extract_concept(facts, concepts, unit="USD"):
             year = int(end[:4])
             if year < START_YEAR:
                 continue
-            # Use "frame" to distinguish instantaneous vs. period metrics.
-            # For duration metrics (SBC, revenue), prefer entries with a frame
-            # that matches the full period (CY####, CY####Q#I, etc.)
             if form == "10-K":
-                # Prefer the most recent filing for the same period
+                # Earlier concept wins for same period; later concept fills missing periods
                 if end not in annual or accn > annual[end]["accn"]:
                     annual[end] = {"val": val, "accn": accn}
+                concept_had_data = True
             elif form == "10-Q":
                 if end not in quarterly or accn > quarterly[end]["accn"]:
                     quarterly[end] = {"val": val, "accn": accn}
-        if annual or quarterly:
-            print(f"    [XBRL] matched '{concept}': {len(annual)} annual, {len(quarterly)} quarterly rows")
-            return (
-                {k: v["val"] for k, v in annual.items()},
-                {k: v["val"] for k, v in quarterly.items()},
-            )
+                concept_had_data = True
+        if concept_had_data:
+            matched.append(concept)
+
+    if annual or quarterly:
+        print(f"    [XBRL] matched {matched}: {len(annual)} annual, {len(quarterly)} quarterly rows")
+        return (
+            {k: v["val"] for k, v in annual.items()},
+            {k: v["val"] for k, v in quarterly.items()},
+        )
     print(f"    [XBRL] no match for concepts: {concepts}")
     return {}, {}
 
