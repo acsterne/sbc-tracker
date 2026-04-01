@@ -65,7 +65,7 @@ def index():
     year = request.args.get("year", "")
 
     valid_sorts = {
-        "sbc_pct_revenue", "sbc_pct_gross_profit", "sbc_annual",
+        "sbc_pct_revenue", "sbc_pct_ebitda", "sbc_annual",
         "revenue_annual", "net_dilution_pct", "revenue_growth_yoy",
         "buyback_spend_annual", "name", "ticker", "sector", "fiscal_year",
     }
@@ -101,9 +101,9 @@ def index():
         SELECT
             c.ticker, c.name, c.sector, c.ipo_year,
             m.fiscal_year,
-            m.sbc_annual, m.revenue_annual, m.gross_profit_annual,
+            m.sbc_annual, m.revenue_annual,
             m.buyback_spend_annual, m.shares_outstanding_eoy,
-            m.sbc_pct_revenue, m.sbc_pct_gross_profit,
+            m.sbc_pct_revenue, m.sbc_pct_ebitda, m.ebitda_annual, m.ebitda_negative,
             m.net_dilution_pct, m.sbc_per_share,
             m.revenue_growth_yoy
         FROM metrics m
@@ -163,7 +163,7 @@ def company(ticker):
             m.sbc_annual, m.revenue_annual, m.gross_profit_annual,
             m.net_income_annual, m.buyback_spend_annual,
             m.shares_outstanding_eoy, m.shares_repurchased_annual,
-            m.sbc_pct_revenue, m.sbc_pct_gross_profit,
+            m.sbc_pct_revenue, m.sbc_pct_ebitda, m.ebitda_annual, m.ebitda_negative,
             m.net_dilution_pct, m.sbc_per_share,
             m.revenue_growth_yoy, m.unrecognized_sbc_annual
         FROM metrics m

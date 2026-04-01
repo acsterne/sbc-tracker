@@ -34,8 +34,15 @@
         </div>
     </div>
     <div class="card">
-        <div class="card-label">SBC % of Gross Profit</div>
-        <div class="card-value">{{ latest.sbc_pct_gross_profit | pct }}</div>
+        <div class="card-label">SBC % of EBITDA</div>
+        <div class="card-value
+            {% if latest.ebitda_negative %}sbc-med
+            {% elif latest.sbc_pct_ebitda and latest.sbc_pct_ebitda > 100 %}sbc-high
+            {% elif latest.sbc_pct_ebitda and latest.sbc_pct_ebitda > 25 %}sbc-med
+            {% elif latest.sbc_pct_ebitda %}sbc-low{% endif %}">
+            {% if latest.ebitda_negative %}neg EBITDA
+            {% else %}{{ latest.sbc_pct_ebitda | pct }}{% endif %}
+        </div>
     </div>
     <div class="card">
         <div class="card-label">Revenue Growth YoY</div>
@@ -105,9 +112,9 @@
                 <th>Year</th>
                 <th class="num">SBC ($)</th>
                 <th class="num">Revenue ($)</th>
-                <th class="num">Gross Profit ($)</th>
+                <th class="num">EBITDA ($)</th>
                 <th class="num">SBC % Rev</th>
-                <th class="num">SBC % GP</th>
+                <th class="num" title="SBC as % of EBITDA. >100% means SBC alone exceeds operating cash earnings.">SBC % EBITDA</th>
                 <th class="num">Rev Growth</th>
                 <th class="num">Buybacks ($)</th>
                 <th class="num">Net Income ($)</th>
@@ -121,14 +128,20 @@
                 <td style="font-weight:600;">{{ r.fiscal_year }}</td>
                 <td class="num">{{ r.sbc_annual | compact }}</td>
                 <td class="num">{{ r.revenue_annual | compact }}</td>
-                <td class="num">{{ r.gross_profit_annual | compact }}</td>
+                <td class="num">{{ r.ebitda_annual | compact }}</td>
                 <td class="num
                     {% if r.sbc_pct_revenue and r.sbc_pct_revenue > 15 %}sbc-high
                     {% elif r.sbc_pct_revenue and r.sbc_pct_revenue > 7 %}sbc-med
                     {% elif r.sbc_pct_revenue %}sbc-low{% endif %}">
                     {{ r.sbc_pct_revenue | pct }}
                 </td>
-                <td class="num">{{ r.sbc_pct_gross_profit | pct }}</td>
+                <td class="num
+                    {% if r.sbc_pct_ebitda and r.sbc_pct_ebitda > 100 %}sbc-high
+                    {% elif r.sbc_pct_ebitda and r.sbc_pct_ebitda > 25 %}sbc-med
+                    {% elif r.sbc_pct_ebitda %}sbc-low{% endif %}">
+                    {% if r.ebitda_negative %}<span title="EBITDA negative" style="color:var(--muted)">neg</span>
+                    {% else %}{{ r.sbc_pct_ebitda | pct }}{% endif %}
+                </td>
                 <td class="num
                     {% if r.revenue_growth_yoy and r.revenue_growth_yoy > 25 %}growth-high
                     {% elif r.revenue_growth_yoy and r.revenue_growth_yoy > 10 %}growth-med

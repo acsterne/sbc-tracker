@@ -84,7 +84,7 @@
             {{ sort_header('sbc_annual', 'SBC ($)') }}
             {{ sort_header('revenue_annual', 'Revenue ($)') }}
             {{ sort_header('sbc_pct_revenue', 'SBC % Rev') }}
-            {{ sort_header('sbc_pct_gross_profit', 'SBC % GP') }}
+            {{ sort_header('sbc_pct_ebitda', 'SBC % EBITDA') }}
             {{ sort_header('revenue_growth_yoy', 'Rev Growth') }}
             {{ sort_header('buyback_spend_annual', 'Buybacks ($)') }}
             {{ sort_header('net_dilution_pct', 'Buyback % Shares') }}
@@ -106,10 +106,14 @@
                 {{ r.sbc_pct_revenue | pct }}
             </td>
             <td class="num
-                {% if r.sbc_pct_gross_profit and r.sbc_pct_gross_profit > 20 %}sbc-high
-                {% elif r.sbc_pct_gross_profit and r.sbc_pct_gross_profit > 10 %}sbc-med
-                {% elif r.sbc_pct_gross_profit %}sbc-low{% endif %}">
-                {{ r.sbc_pct_gross_profit | pct }}
+                {% if r.sbc_pct_ebitda and r.sbc_pct_ebitda > 100 %}sbc-high
+                {% elif r.sbc_pct_ebitda and r.sbc_pct_ebitda > 25 %}sbc-med
+                {% elif r.sbc_pct_ebitda %}sbc-low{% endif %}">
+                {% if r.ebitda_negative %}
+                    <span title="EBITDA is negative — ratio not meaningful" style="color:var(--muted)">neg EBITDA</span>
+                {% else %}
+                    {{ r.sbc_pct_ebitda | pct }}
+                {% endif %}
             </td>
             <td class="num
                 {% if r.revenue_growth_yoy and r.revenue_growth_yoy > 25 %}growth-high
@@ -130,12 +134,15 @@
 </div>
 
 <p style="color:var(--muted);font-size:11px;margin-top:16px;">
-    SBC % Rev colored: <span class="sbc-high">red &gt;15%</span> ·
+    SBC % Rev: <span class="sbc-high">red &gt;15%</span> ·
     <span class="sbc-med">orange 7–15%</span> ·
     <span class="sbc-low">green &lt;7%</span>.
+    SBC % EBITDA: <span class="sbc-high">red &gt;100%</span> ·
+    <span class="sbc-med">orange 25–100%</span> ·
+    <span class="sbc-low">green &lt;25%</span>.
     Revenue growth: <span class="growth-high">green &gt;25%</span> ·
     <span class="growth-med">yellow 10–25%</span> ·
     <span style="color:var(--muted)">grey &lt;10%</span>.
-    Data sourced from SEC EDGAR 10-K/10-Q filings.
+    Data sourced from SEC EDGAR 10-K filings.
 </p>
 {% endblock %}

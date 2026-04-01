@@ -71,6 +71,16 @@ UNRECOGNIZED_SBC_CONCEPTS = [
     "EmployeeServiceShareBasedCompensationNonvestedAwardsTotalCompensationCostNotYetRecognized",
     "ShareBasedCompensationArrangementByShareBasedPaymentAwardEquityInstrumentsOtherThanOptionsNonvestedNumber",
 ]
+OPERATING_INCOME_CONCEPTS = [
+    "OperatingIncomeLoss",
+    "IncomeLossFromContinuingOperationsBeforeIncomeTaxesExtraordinaryItemsNoncontrollingInterest",
+    "IncomeLossFromContinuingOperationsBeforeIncomeTaxesDomestic",
+]
+DA_CONCEPTS = [
+    "DepreciationDepletionAndAmortization",
+    "DepreciationAndAmortization",
+    "Depreciation",
+]
 
 
 # ── Request utilities ────────────────────────────────────────────────────────
@@ -216,6 +226,8 @@ def layer1_save_filings(cur, company_id, facts):
     shr_ann, _           = _extract_shares_merged(facts, SHARES_CONCEPTS)
     shrep_ann, _         = _extract_shares_merged(facts, SHARES_REPURCHASED_CONCEPTS)
     unrec_ann, _         = _extract_merged(facts, UNRECOGNIZED_SBC_CONCEPTS)
+    oi_ann, _            = _extract_merged(facts, OPERATING_INCOME_CONCEPTS)
+    da_ann, _            = _extract_merged(facts, DA_CONCEPTS)
 
     all_annual = set(sbc_ann) | set(rev_ann) | set(gp_ann) | set(ni_ann) | set(bb_ann) | set(shr_ann)
     years_with_sbc = set()
@@ -224,36 +236,47 @@ def layer1_save_filings(cur, company_id, facts):
         period_end = date.fromisoformat(d)
         fiscal_year = period_end.year
         sbc_val = sbc_ann.get(d)
+        oi_val  = oi_ann.get(d)
+        da_val  = da_ann.get(d)
+        ebitda_val = (oi_val + da_val) if (oi_val is not None and da_val is not None) else None
+        ebitda_src = "xbrl_derived" if ebitda_val is not None else None
         cur.execute("""
             INSERT INTO filings (
                 company_id, period_end, fiscal_year, fiscal_quarter, form_type,
                 sbc_expense, revenue, gross_profit, net_income,
                 shares_outstanding, shares_repurchased, buyback_spend,
-                unrecognized_sbc, data_source, confidence
+                unrecognized_sbc, operating_income, depreciation_amortization,
+                ebitda, ebitda_source, data_source, confidence
             ) VALUES (
                 %(cid)s, %(pe)s, %(fy)s, NULL, '10-K',
                 %(sbc)s, %(rev)s, %(gp)s, %(ni)s,
                 %(shr)s, %(shrep)s, %(bb)s,
-                %(unrec)s, %(src)s, %(conf)s
+                %(unrec)s, %(oi)s, %(da)s,
+                %(ebitda)s, %(ebitda_src)s, %(src)s, %(conf)s
             )
             ON CONFLICT (company_id, period_end, form_type) DO UPDATE SET
-                sbc_expense        = COALESCE(EXCLUDED.sbc_expense, filings.sbc_expense),
-                revenue            = COALESCE(EXCLUDED.revenue, filings.revenue),
-                gross_profit       = COALESCE(EXCLUDED.gross_profit, filings.gross_profit),
-                net_income         = COALESCE(EXCLUDED.net_income, filings.net_income),
-                shares_outstanding = COALESCE(EXCLUDED.shares_outstanding, filings.shares_outstanding),
-                shares_repurchased = COALESCE(EXCLUDED.shares_repurchased, filings.shares_repurchased),
-                buyback_spend      = COALESCE(EXCLUDED.buyback_spend, filings.buyback_spend),
-                unrecognized_sbc   = COALESCE(EXCLUDED.unrecognized_sbc, filings.unrecognized_sbc),
-                data_source        = COALESCE(EXCLUDED.data_source, filings.data_source),
-                confidence         = COALESCE(EXCLUDED.confidence, filings.confidence),
-                fetched_at         = NOW()
+                sbc_expense               = COALESCE(EXCLUDED.sbc_expense, filings.sbc_expense),
+                revenue                   = COALESCE(EXCLUDED.revenue, filings.revenue),
+                gross_profit              = COALESCE(EXCLUDED.gross_profit, filings.gross_profit),
+                net_income                = COALESCE(EXCLUDED.net_income, filings.net_income),
+                shares_outstanding        = COALESCE(EXCLUDED.shares_outstanding, filings.shares_outstanding),
+                shares_repurchased        = COALESCE(EXCLUDED.shares_repurchased, filings.shares_repurchased),
+                buyback_spend             = COALESCE(EXCLUDED.buyback_spend, filings.buyback_spend),
+                unrecognized_sbc          = COALESCE(EXCLUDED.unrecognized_sbc, filings.unrecognized_sbc),
+                operating_income          = COALESCE(EXCLUDED.operating_income, filings.operating_income),
+                depreciation_amortization = COALESCE(EXCLUDED.depreciation_amortization, filings.depreciation_amortization),
+                ebitda                    = COALESCE(EXCLUDED.ebitda, filings.ebitda),
+                ebitda_source             = COALESCE(EXCLUDED.ebitda_source, filings.ebitda_source),
+                data_source               = COALESCE(EXCLUDED.data_source, filings.data_source),
+                confidence                = COALESCE(EXCLUDED.confidence, filings.confidence),
+                fetched_at                = NOW()
         """, {
             "cid": company_id, "pe": period_end, "fy": fiscal_year,
             "sbc": sbc_val,
             "rev": rev_ann.get(d), "gp": gp_ann.get(d), "ni": ni_ann.get(d),
             "shr": shr_ann.get(d), "shrep": shrep_ann.get(d), "bb": bb_ann.get(d),
             "unrec": unrec_ann.get(d),
+            "oi": oi_val, "da": da_val, "ebitda": ebitda_val, "ebitda_src": ebitda_src,
             "src": "layer1", "conf": "high" if sbc_val else None,
         })
         if sbc_val:
@@ -476,7 +499,7 @@ def refresh_metrics(cur, company_id):
         SELECT fiscal_year,
                sbc_expense, revenue, gross_profit, net_income,
                buyback_spend, shares_repurchased, shares_outstanding,
-               unrecognized_sbc
+               unrecognized_sbc, operating_income, depreciation_amortization, ebitda
         FROM filings
         WHERE company_id = %s AND form_type = '10-K'
         ORDER BY fiscal_year
@@ -486,18 +509,26 @@ def refresh_metrics(cur, company_id):
 
     for yr in sorted(rows):
         r = rows[yr]
-        sbc  = r["sbc_expense"]
-        rev  = r["revenue"]
-        gp   = r["gross_profit"]
-        shr  = r["shares_outstanding"]
-        bb   = r["buyback_spend"]
+        sbc   = r["sbc_expense"]
+        rev   = r["revenue"]
+        gp    = r["gross_profit"]
+        shr   = r["shares_outstanding"]
+        bb    = r["buyback_spend"]
         shrep = r["shares_repurchased"]
+        oi    = r["operating_income"]
+        da    = r["depreciation_amortization"]
+        # Use stored ebitda if available, else derive from components
+        ebitda = r["ebitda"] if r["ebitda"] is not None else (
+            (oi + da) if (oi is not None and da is not None) else None
+        )
 
-        sbc_pct_rev  = (sbc / rev * 100)   if sbc and rev  else None
-        sbc_pct_gp   = (sbc / gp * 100)    if sbc and gp   else None
-        sbc_per_shr  = (sbc / shr)          if sbc and shr  else None
-        rev_growth   = ((rev - prev_rev) / prev_rev * 100) if rev and prev_rev else None
-        net_dil      = (shrep / shr * 100)  if shrep and shr else None
+        sbc_pct_rev    = (sbc / rev * 100)      if sbc and rev    else None
+        sbc_pct_gp     = (sbc / gp * 100)       if sbc and gp     else None
+        sbc_per_shr    = (sbc / shr)             if sbc and shr    else None
+        rev_growth     = ((rev - prev_rev) / prev_rev * 100) if rev and prev_rev else None
+        net_dil        = (shrep / shr * 100)     if shrep and shr  else None
+        sbc_pct_ebitda = (sbc / ebitda * 100)   if sbc and ebitda else None
+        ebitda_negative = (ebitda < 0)           if ebitda is not None else None
 
         cur.execute("""
             INSERT INTO metrics (
@@ -505,13 +536,15 @@ def refresh_metrics(cur, company_id):
                 sbc_annual, revenue_annual, gross_profit_annual, net_income_annual,
                 buyback_spend_annual, shares_repurchased_annual, shares_outstanding_eoy,
                 sbc_pct_revenue, sbc_pct_gross_profit, sbc_per_share,
-                net_dilution_pct, revenue_growth_yoy, unrecognized_sbc_annual, computed_at
+                net_dilution_pct, revenue_growth_yoy, unrecognized_sbc_annual,
+                ebitda_annual, sbc_pct_ebitda, ebitda_negative, computed_at
             ) VALUES (
                 %(cid)s, %(fy)s,
                 %(sbc)s, %(rev)s, %(gp)s, %(ni)s,
                 %(bb)s, %(shrep)s, %(shr)s,
                 %(sbc_pct_rev)s, %(sbc_pct_gp)s, %(sbc_per_shr)s,
-                %(net_dil)s, %(rev_growth)s, %(unrec)s, NOW()
+                %(net_dil)s, %(rev_growth)s, %(unrec)s,
+                %(ebitda)s, %(sbc_pct_ebitda)s, %(ebitda_negative)s, NOW()
             )
             ON CONFLICT (company_id, fiscal_year) DO UPDATE SET
                 sbc_annual              = EXCLUDED.sbc_annual,
@@ -527,6 +560,9 @@ def refresh_metrics(cur, company_id):
                 net_dilution_pct        = EXCLUDED.net_dilution_pct,
                 revenue_growth_yoy      = EXCLUDED.revenue_growth_yoy,
                 unrecognized_sbc_annual = EXCLUDED.unrecognized_sbc_annual,
+                ebitda_annual           = EXCLUDED.ebitda_annual,
+                sbc_pct_ebitda          = EXCLUDED.sbc_pct_ebitda,
+                ebitda_negative         = EXCLUDED.ebitda_negative,
                 computed_at             = NOW()
         """, {
             "cid": company_id, "fy": yr,
@@ -535,6 +571,8 @@ def refresh_metrics(cur, company_id):
             "sbc_pct_rev": sbc_pct_rev, "sbc_pct_gp": sbc_pct_gp,
             "sbc_per_shr": sbc_per_shr, "net_dil": net_dil, "rev_growth": rev_growth,
             "unrec": r["unrecognized_sbc"],
+            "ebitda": ebitda, "sbc_pct_ebitda": sbc_pct_ebitda,
+            "ebitda_negative": ebitda_negative,
         })
         if rev:
             prev_rev = rev
