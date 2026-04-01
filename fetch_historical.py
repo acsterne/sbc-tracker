@@ -290,13 +290,36 @@ def get_all_10k_filings(cik):
 def get_filing_index(cik, accession_nodash, accession_dashed):
     """Return the list of documents in a filing, or [] on failure."""
     cik_int = int(cik)
-    url = (f"{EDGAR_ARCHIVES}/{cik_int}/{accession_nodash}"
-           f"/{accession_dashed}-index.json")
+    # Correct EDGAR format:  .../edgar/data/{cik}/{accn_no_dashes}/{accn_with_dashes}-index.json
+    url = f"{EDGAR_ARCHIVES}/{cik_int}/{accession_nodash}/{accession_dashed}-index.json"
+    print(f"        [INDEX] {url}")
     r = fetch_url(url)
+    if r:
+        try:
+            return r.json().get("directory", {}).get("item", [])
+        except Exception:
+            pass
+    # Fallback: try .htm index for older filings
+    url_htm = f"{EDGAR_ARCHIVES}/{cik_int}/{accession_nodash}/{accession_dashed}-index.htm"
+    print(f"        [INDEX] JSON failed, trying .htm: {url_htm}")
+    r = fetch_url(url_htm, accept="text/html")
     if not r:
         return []
+    # Parse the .htm index page to extract document names
     try:
-        return r.json().get("directory", {}).get("item", [])
+        from bs4 import BeautifulSoup as BS
+        soup = BS(r.text, "html.parser")
+        items = []
+        for row in soup.find_all("tr"):
+            cells = row.find_all("td")
+            if len(cells) >= 4:
+                link = cells[2].find("a") if len(cells) > 2 else None
+                name = link.get_text(strip=True) if link else cells[2].get_text(strip=True)
+                if name and "." in name:
+                    items.append({"name": name})
+        if items:
+            print(f"        [INDEX] .htm parsed: {len(items)} docs")
+        return items
     except Exception:
         return []
 
