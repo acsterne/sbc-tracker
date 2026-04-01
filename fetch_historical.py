@@ -113,7 +113,19 @@ CONCEPT_MATCHERS = {
     },
 }
 
-ALL_CONCEPTS = list(CONCEPT_MATCHERS.keys())
+ALL_CONCEPTS = list(CONCEPT_MATCHERS.keys()) + ["shares_outstanding"]
+
+# Direct tag-name priority lists (bypass fuzzy matching for reliability)
+SHARES_TAG_PRIORITY = [
+    "CommonStockSharesOutstanding",
+    "EntityCommonStockSharesOutstanding",
+    "CommonStockSharesIssuedAndOutstanding",
+]
+BUYBACK_TAG_PRIORITY = [
+    "PaymentsForRepurchaseOfCommonStock",
+    "TreasuryStockValueAcquiredCostMethod",
+    "StockRepurchasedDuringPeriodValue",
+]
 
 
 # ── Label scoring ─────────────────────────────────────────────────────────────
@@ -402,8 +414,9 @@ _XBRL_SKIP = ("_cal.xml", "_def.xml", "_pre.xml", "_ref.xml")
 
 def parse_xbrl_instance(xml_bytes, label_map):
     """
-    Extract every USD numeric fact from an XBRL instance document.
-    Returns list of {tag, label, value, period_start, period_end}.
+    Extract every USD and shares-unit numeric fact from an XBRL instance doc.
+    Returns list of {tag, label, value, period_start, period_end, unit_type}.
+    unit_type is "USD" or "shares".
     """
     try:
         root = ElementTree.fromstring(xml_bytes)
@@ -431,15 +444,29 @@ def parse_xbrl_instance(xml_bytes, label_map):
         unit_ref = elem.get("unitRef", "")
         if not unit_ref:
             continue
-        # Only USD facts; shares/pure units handled by fetch_sbc.py
-        if "share" in unit_ref.lower() or "pure" in unit_ref.lower():
-            continue
-        if not any(x in unit_ref.upper() for x in ("USD", "US_DOLLAR")):
+        if "pure" in unit_ref.lower():
             continue
 
-        val = _normalize(raw, elem.get("decimals", "0"))
-        if val is None or abs(val) < 1_000:   # skip sub-$1K amounts
+        # Determine unit type
+        if "share" in unit_ref.lower():
+            unit_type = "shares"
+        elif any(x in unit_ref.upper() for x in ("USD", "US_DOLLAR")):
+            unit_type = "USD"
+        else:
             continue
+
+        if unit_type == "USD":
+            val = _normalize(raw, elem.get("decimals", "0"))
+            if val is None or abs(val) < 1_000:
+                continue
+        else:
+            # Shares: parse as-is, no USD scaling
+            try:
+                val = int(float(raw))
+            except (ValueError, TypeError):
+                continue
+            if val <= 0:
+                continue
 
         ctx = contexts.get(elem.get("contextRef", ""))
         if not ctx or not ctx["end"] or ctx["end"].year < START_YEAR:
@@ -450,6 +477,7 @@ def parse_xbrl_instance(xml_bytes, label_map):
             "tag":          local,
             "label":        label,
             "value":        val,
+            "unit_type":    unit_type,
             "period_start": ctx["start"],
             "period_end":   ctx["end"],
         })
@@ -475,6 +503,8 @@ def map_to_concepts(facts, fiscal_year):
 
     annual = []
     for f in facts:
+        if f.get("unit_type") != "USD":
+            continue  # shares handled by extract_shares_outstanding()
         end   = f["period_end"]
         start = f["period_start"]
         if not (fy_end_min <= end <= fy_end_max):
@@ -487,7 +517,7 @@ def map_to_concepts(facts, fiscal_year):
         annual.append(f)
 
     results = {}
-    for concept in ALL_CONCEPTS:
+    for concept in CONCEPT_MATCHERS:  # USD concepts only
         best_score = 0
         best_fact  = None
         for f in annual:
@@ -507,6 +537,76 @@ def map_to_concepts(facts, fiscal_year):
             }
 
     return results
+
+
+def extract_shares_outstanding(facts, fiscal_year):
+    """
+    Find shares outstanding at fiscal year-end from instant (point-in-time) facts.
+    Uses direct tag-name matching in priority order. Takes the value closest to
+    the fiscal year end date.
+    """
+    fy_end_min = date(fiscal_year, 1, 1)
+    fy_end_max = date(fiscal_year + 1, 3, 31)
+
+    candidates = []
+    for f in facts:
+        if f.get("unit_type") != "shares":
+            continue
+        end = f["period_end"]
+        if not (fy_end_min <= end <= fy_end_max):
+            continue
+        # Prefer instant (start == end) or no start
+        start = f["period_start"]
+        if start is not None and start != end:
+            continue  # skip duration facts — want point-in-time
+        candidates.append(f)
+
+    # Try priority tags first
+    for tag in SHARES_TAG_PRIORITY:
+        for f in candidates:
+            if f["tag"] == tag:
+                return {"value": f["value"], "tag": tag, "label": f["label"],
+                        "confidence": "high"}
+
+    # Fallback: any tag containing "sharesoutstanding"
+    for f in candidates:
+        if "sharesoutstanding" in f["tag"].lower():
+            return {"value": f["value"], "tag": f["tag"], "label": f["label"],
+                    "confidence": "medium"}
+
+    return None
+
+
+def extract_buybacks_direct(facts, fiscal_year):
+    """
+    Direct tag-name matching for buyback spend (USD duration facts).
+    Falls back after fuzzy matching fails.
+    """
+    fy_end_min = date(fiscal_year, 1, 1)
+    fy_end_max = date(fiscal_year + 1, 3, 31)
+
+    annual_usd = []
+    for f in facts:
+        if f.get("unit_type") != "USD":
+            continue
+        end   = f["period_end"]
+        start = f["period_start"]
+        if not (fy_end_min <= end <= fy_end_max):
+            continue
+        if start is None or start == end:
+            continue
+        duration = (end - start).days
+        if not (270 <= duration <= 395):
+            continue
+        annual_usd.append(f)
+
+    for tag in BUYBACK_TAG_PRIORITY:
+        for f in annual_usd:
+            if f["tag"] == tag:
+                return {"value": f["value"], "tag": tag, "label": f["label"],
+                        "confidence": "high"}
+
+    return None
 
 
 # ── HTML table fallback ───────────────────────────────────────────────────────
@@ -629,6 +729,7 @@ def process_filing(cur, company_id, ticker, cik, filing, force=False):
          and not any(it["name"].lower().endswith(s) for s in _XBRL_SKIP)),
         None,
     )
+    all_facts = []  # preserve for shares/buyback extraction below
     if xbrl_item:
         r = fetch_url(
             f"{EDGAR_ARCHIVES}/{cik_int}/{acc_nodash}/{xbrl_item['name']}",
@@ -636,9 +737,20 @@ def process_filing(cur, company_id, ticker, cik, filing, force=False):
         )
         if r:
             all_facts = parse_xbrl_instance(r.content, label_map)
-            print(f"        facts: {len(all_facts)} USD")
+            usd_count   = sum(1 for f in all_facts if f.get("unit_type") == "USD")
+            share_count = sum(1 for f in all_facts if f.get("unit_type") == "shares")
+            print(f"        facts: {usd_count} USD, {share_count} shares")
             if all_facts:
                 mapped = map_to_concepts(all_facts, fiscal_year)
+                # Direct tag extraction for shares outstanding
+                shr = extract_shares_outstanding(all_facts, fiscal_year)
+                if shr:
+                    mapped["shares_outstanding"] = shr
+                # Direct tag fallback for buybacks
+                if "buybacks" not in mapped:
+                    bb = extract_buybacks_direct(all_facts, fiscal_year)
+                    if bb:
+                        mapped["buybacks"] = bb
                 source = "xbrl_instance"
                 if mapped:
                     found = ", ".join(
@@ -684,11 +796,13 @@ def process_filing(cur, company_id, ticker, cik, filing, force=False):
         INSERT INTO filings (
             company_id, period_end, fiscal_year, fiscal_quarter, form_type,
             sbc_expense, revenue, gross_profit, net_income, buyback_spend,
+            shares_outstanding,
             operating_income, depreciation_amortization, ebitda, ebitda_source,
             accession_number, data_source, confidence
         ) VALUES (
             %(cid)s, %(pe)s, %(fy)s, NULL, '10-K',
             %(sbc)s, %(rev)s, %(gp)s, %(ni)s, %(bb)s,
+            %(shr)s,
             %(oi)s,  %(da)s, %(ebitda)s, %(ebitda_src)s,
             %(accn)s, %(src)s, %(conf)s
         )
@@ -703,6 +817,8 @@ def process_filing(cur, company_id, ticker, cik, filing, force=False):
                                                  filings.net_income),
             buyback_spend             = COALESCE(EXCLUDED.buyback_spend,
                                                  filings.buyback_spend),
+            shares_outstanding        = COALESCE(EXCLUDED.shares_outstanding,
+                                                 filings.shares_outstanding),
             operating_income          = COALESCE(EXCLUDED.operating_income,
                                                  filings.operating_income),
             depreciation_amortization = COALESCE(EXCLUDED.depreciation_amortization,
@@ -727,6 +843,7 @@ def process_filing(cur, company_id, ticker, cik, filing, force=False):
         "gp":         mapped.get("gross_profit",     {}).get("value"),
         "ni":         mapped.get("net_income",       {}).get("value"),
         "bb":         mapped.get("buybacks",         {}).get("value"),
+        "shr":        mapped.get("shares_outstanding", {}).get("value"),
         "oi":         oi,
         "da":         da,
         "ebitda":     ebitda,
@@ -774,6 +891,25 @@ def process_company(cur, company_id, ticker, cik, force=False):
     from fetch_sbc import refresh_metrics
     refresh_metrics(cur, company_id)
     cur.connection.commit()
+
+    # Print year-by-year summary for verification
+    cur.execute("""
+        SELECT fiscal_year, sbc_expense, shares_outstanding, buyback_spend
+        FROM filings
+        WHERE company_id = %s AND form_type = '10-K'
+        ORDER BY fiscal_year
+    """, (company_id,))
+    filing_rows = cur.fetchall()
+    if filing_rows:
+        print(f"\n    [{ticker}] Year-by-year:")
+        print(f"    {'Year':<6} {'SBC':>16} {'Shares Outstanding':>20} {'Buybacks':>16}")
+        print(f"    {'-'*6} {'-'*16} {'-'*20} {'-'*16}")
+        for r in filing_rows:
+            sbc_str = f"${r['sbc_expense']:,}" if r['sbc_expense'] else "—"
+            shr_str = f"{r['shares_outstanding']:,}" if r['shares_outstanding'] else "—"
+            bb_str  = f"${r['buyback_spend']:,}" if r['buyback_spend'] else "—"
+            print(f"    {r['fiscal_year']:<6} {sbc_str:>16} {shr_str:>20} {bb_str:>16}")
+        print()
 
     print(f"    [{ticker}] done — {stats['with_sbc']}/{stats['total']} with SBC data")
     return stats
