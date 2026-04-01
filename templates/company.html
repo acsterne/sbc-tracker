@@ -124,9 +124,15 @@
             </tr>
         </thead>
         <tbody>
+            {% set first_year = history[0].fiscal_year if history else 0 %}
             {% for r in history | reverse %}
             <tr>
-                <td style="font-weight:600;">{{ r.fiscal_year }}</td>
+                <td style="font-weight:600;">
+                    {{ r.fiscal_year }}
+                    {% if r.fiscal_year == first_year %}
+                    <span style="display:inline-block;background:#e2e8f0;color:#475569;font-size:10px;padding:1px 5px;border-radius:3px;margin-left:4px;font-weight:500;vertical-align:middle;">IPO</span>
+                    {% endif %}
+                </td>
                 <td class="num">{{ r.sbc_annual | compact }}</td>
                 <td class="num">{{ r.revenue_annual | compact }}</td>
                 <td class="num">{{ r.ebitda_annual | compact }}</td>

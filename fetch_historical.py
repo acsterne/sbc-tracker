@@ -377,34 +377,6 @@ def parse_label_linkbase(xml_bytes):
 
 # ── XBRL instance document parsing ───────────────────────────────────────────
 
-def _parse_contexts(root):
-    """Extract {context_id: {start, end}} from XBRL instance doc."""
-    contexts = {}
-    for elem in root.iter():
-        local = elem.tag.split("}")[-1] if "}" in elem.tag else elem.tag
-        if local != "context":
-            continue
-        ctx_id = elem.get("id", "")
-        start = end = None
-        for child in elem.iter():
-            cl = child.tag.split("}")[-1] if "}" in child.tag else child.tag
-            txt = (child.text or "").strip()
-            if not txt:
-                continue
-            try:
-                if cl == "startDate":
-                    start = date.fromisoformat(txt)
-                elif cl == "endDate":
-                    end = date.fromisoformat(txt)
-                elif cl == "instant":
-                    start = end = date.fromisoformat(txt)
-            except ValueError:
-                pass
-        if end:
-            contexts[ctx_id] = {"start": start, "end": end}
-    return contexts
-
-
 def _normalize(raw_text, decimals_attr):
     """
     Convert a raw XBRL text value to an integer dollar amount.
@@ -432,35 +404,55 @@ def _normalize(raw_text, decimals_attr):
     return int(val)
 
 
-_XBRL_SKIP = ("_cal.xml", "_def.xml", "_pre.xml", "_ref.xml")
+_XBRL_SKIP = ("_cal.xml", "_def.xml", "_pre.xml", "_ref.xml", "_lab.xml")
 
 
 def parse_xbrl_instance(xml_bytes, label_map):
     """
     Extract every USD and shares-unit numeric fact from an XBRL instance doc.
+    Uses BeautifulSoup XML parser (lxml-xml) which is more tolerant of
+    malformed XBRL than stdlib ElementTree.
     Returns list of {tag, label, value, period_start, period_end, unit_type}.
-    unit_type is "USD" or "shares".
     """
     try:
-        root = ElementTree.fromstring(xml_bytes)
+        soup = BeautifulSoup(xml_bytes, features="xml")
     except Exception as e:
         print(f"        [XBRL] XML parse error: {e}")
         return []
 
-    contexts = _parse_contexts(root)
+    # ── Parse contexts ────────────────────────────────────────────────────────
+    contexts = {}
+    for ctx_tag in soup.find_all("context"):
+        ctx_id = ctx_tag.get("id", "")
+        start = end = None
+        sd = ctx_tag.find("startDate")
+        ed = ctx_tag.find("endDate")
+        inst = ctx_tag.find("instant")
+        try:
+            if sd and sd.string:
+                start = date.fromisoformat(sd.string.strip())
+            if ed and ed.string:
+                end = date.fromisoformat(ed.string.strip())
+            if inst and inst.string:
+                start = end = date.fromisoformat(inst.string.strip())
+        except ValueError:
+            pass
+        if end:
+            contexts[ctx_id] = {"start": start, "end": end}
+
+    # ── Extract facts ─────────────────────────────────────────────────────────
     facts = []
-
-    for elem in root.iter():
-        if "}" not in elem.tag:
+    for elem in soup.find_all(True):
+        # Skip structural elements
+        tag_name = elem.name
+        if tag_name in ("context", "unit", "schemaRef", "linkbaseRef",
+                        "roleRef", "arcroleRef", "[document]"):
             continue
-        local = elem.tag.split("}")[-1]
-
-        # Skip structural / non-fact elements
-        if local in ("context", "unit", "schemaRef", "linkbaseRef",
-                      "roleRef", "arcroleRef"):
+        # Skip container elements (no direct text value)
+        raw = elem.string
+        if raw is None:
             continue
-
-        raw = (elem.text or "").strip()
+        raw = raw.strip()
         if not raw or not re.fullmatch(r"-?\d+(\.\d+)?", raw):
             continue
 
@@ -470,7 +462,6 @@ def parse_xbrl_instance(xml_bytes, label_map):
         if "pure" in unit_ref.lower():
             continue
 
-        # Determine unit type
         if "share" in unit_ref.lower():
             unit_type = "shares"
         elif any(x in unit_ref.upper() for x in ("USD", "US_DOLLAR")):
@@ -483,7 +474,6 @@ def parse_xbrl_instance(xml_bytes, label_map):
             if val is None or abs(val) < 1_000:
                 continue
         else:
-            # Shares: parse as-is, no USD scaling
             try:
                 val = int(float(raw))
             except (ValueError, TypeError):
@@ -495,6 +485,8 @@ def parse_xbrl_instance(xml_bytes, label_map):
         if not ctx or not ctx["end"] or ctx["end"].year < START_YEAR:
             continue
 
+        # Local tag name (strip namespace prefix if present)
+        local = tag_name.split(":")[-1] if ":" in tag_name else tag_name
         label = label_map.get(local) or _camel_to_words(local)
         facts.append({
             "tag":          local,
