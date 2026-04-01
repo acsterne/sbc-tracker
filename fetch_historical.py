@@ -991,7 +991,7 @@ def process_company(cur, company_id, ticker, cik, force=False):
     refresh_metrics(cur, company_id)
     cur.connection.commit()
 
-    # Print year-by-year summary for verification
+    # Print year-by-year summary
     cur.execute("""
         SELECT fiscal_year, sbc_expense, shares_outstanding, buyback_spend
         FROM filings
@@ -1008,9 +1008,41 @@ def process_company(cur, company_id, ticker, cik, force=False):
             shr_str = f"{r['shares_outstanding']:,}" if r['shares_outstanding'] else "—"
             bb_str  = f"${r['buyback_spend']:,}" if r['buyback_spend'] else "—"
             print(f"    {r['fiscal_year']:<6} {sbc_str:>16} {shr_str:>20} {bb_str:>16}")
-        print()
 
-    print(f"    [{ticker}] done — {stats['with_sbc']}/{stats['total']} with SBC data")
+    # ── Validate this company ─────────────────────────────────────────────────
+    from validate import run_benchmarks, run_sanity_rules, heal_suspect_values
+    bench  = run_benchmarks(cur, ticker_filter=ticker)
+    flags  = run_sanity_rules(cur, ticker_filter=ticker)
+    healed = 0
+
+    if flags:
+        print(f"\n    [{ticker}] {len(flags)} suspect values — healing...")
+        healed = heal_suspect_values(cur, flags)
+        cur.connection.commit()
+
+        # Re-validate after healing
+        flags_after = run_sanity_rules(cur, ticker_filter=ticker)
+        needs_review = len(flags_after)
+        if needs_review:
+            print(f"    [{ticker}] {needs_review} values still suspect after healing — needs_review")
+    else:
+        needs_review = 0
+
+    bench_pass = bench["passed"]
+    bench_fail = bench["failed"] + bench["missing"]
+    if bench_fail:
+        print(f"    [{ticker}] benchmarks: {bench_pass} passed, {bench_fail} failed")
+    elif bench_pass:
+        print(f"    [{ticker}] benchmarks: {bench_pass}/{bench_pass} passed")
+
+    print(f"    [{ticker}] done — {stats['with_sbc']}/{stats['total']} filings with SBC")
+
+    stats["validation"] = {
+        "bench": bench,
+        "flags": len(flags),
+        "healed": healed,
+        "needs_review": needs_review,
+    }
     return stats
 
 
@@ -1022,22 +1054,70 @@ def print_summary(all_stats):
     total_sbc       = sum(s["with_sbc"] for s in all_stats.values())
     total_failed    = sum(s["failed"]   for s in all_stats.values())
 
-    print("\n" + "=" * 60)
-    print("HISTORICAL INGESTION SUMMARY")
-    print("=" * 60)
+    # Aggregate validation results
+    total_bench_pass = 0
+    total_bench_fail = 0
+    total_flags      = 0
+    total_healed     = 0
+    total_review     = 0
+    all_bench_details = []
+    for s in all_stats.values():
+        v = s.get("validation", {})
+        b = v.get("bench", {})
+        total_bench_pass += b.get("passed", 0)
+        total_bench_fail += b.get("failed", 0) + b.get("missing", 0)
+        total_flags      += v.get("flags", 0)
+        total_healed     += v.get("healed", 0)
+        total_review     += v.get("needs_review", 0)
+        all_bench_details.extend(b.get("details", []))
+
+    RED = "\033[91m"
+    GRN = "\033[92m"
+    YEL = "\033[93m"
+    RST = "\033[0m"
+    BOLD = "\033[1m"
+
+    print(f"\n{'='*65}")
+    print(f"{BOLD}INGESTION + VALIDATION SUMMARY{RST}")
+    print(f"{'='*65}")
     print(f"  Companies processed : {total_companies}")
     print(f"  Total 10-K filings  : {total_filings}")
-    print(f"  Filings with SBC    : {total_sbc} ({total_sbc/total_filings*100:.0f}%)"
-          if total_filings else "")
+    if total_filings:
+        print(f"  Filings with SBC    : {total_sbc} ({total_sbc/total_filings*100:.0f}%)")
     print(f"  Failed/no data      : {total_failed}")
+    print()
+    total_bench = total_bench_pass + total_bench_fail
+    if total_bench:
+        print(f"  Benchmark checks    : {total_bench_pass}/{total_bench} passed")
+    print(f"  Sanity flags        : {total_flags} values flagged")
+    print(f"  Self-healed         : {total_healed} values nulled")
+    print(f"  Needs review        : {total_review} values still suspect")
 
-    # Flag companies below 70% SBC coverage
-    print("\n  Coverage by company (filings with SBC / total filings):")
+    # Failed benchmarks
+    failed_bench = [d for d in all_bench_details if d["status"] != "PASS"]
+    if failed_bench:
+        print(f"\n  {RED}FAILED BENCHMARKS:{RST}")
+        for d in failed_bench:
+            actual = d.get("actual")
+            if actual is None:
+                actual_str = "MISSING"
+            elif abs(actual) >= 1e9:
+                actual_str = f"${actual/1e9:.1f}B"
+            else:
+                actual_str = f"${actual/1e6:.0f}M"
+            exp = d["expected"]
+            exp_str = f"${exp/1e9:.1f}B" if abs(exp) >= 1e9 else f"${exp/1e6:.0f}M"
+            pct_str = f" ({d.get('pct_off',0)*100:.0f}% off)" if actual else ""
+            print(f"    {RED}{d['ticker']:<6} FY{d['year']} {d['concept']:<10}: "
+                  f"got {actual_str}, expected {exp_str}{pct_str}{RST}")
+
+    # Coverage
+    print(f"\n  Coverage (filings with SBC / total):")
     for ticker, s in sorted(all_stats.items()):
         pct = s["with_sbc"] / s["total"] * 100 if s["total"] else 0
-        flag = "  ✗ <70%" if pct < 70 else ""
+        flag = f"  {RED}✗ <70%{RST}" if pct < 70 else ""
         print(f"    {ticker:<8} {s['with_sbc']:>3}/{s['total']:<3}  {pct:.0f}%{flag}")
-    print("=" * 60)
+    print(f"{'='*65}")
 
 
 # ── Entry point ───────────────────────────────────────────────────────────────
@@ -1106,18 +1186,22 @@ def main():
 
     print_summary(all_stats)
 
-    # Run coverage matrix from fetch_sbc if the table exists
-    try:
-        from fetch_sbc import print_coverage_matrix
-        print_coverage_matrix(cur)
-    except Exception as e:
-        print(f"[INFO] Could not run coverage matrix: {e}")
+    # Run consolidated validation report across ALL companies (not just processed ones)
+    if all_stats:
+        try:
+            from validate import run_benchmarks, run_sanity_rules, print_report
+            print("\n  Running final consolidated validation across all companies...")
+            final_bench = run_benchmarks(cur)
+            final_flags = run_sanity_rules(cur)
+            print_report(final_bench, final_flags, healed_count=0)
+        except Exception as e:
+            print(f"[INFO] Consolidated validation skipped: {e}")
 
     cur.close()
     conn.close()
 
     if not args.ticker and all_stats:
-        print(f"\n[INFO] Checkpoint saved to {CHECKPOINT_FILE}")
+        print(f"[INFO] Checkpoint saved to {CHECKPOINT_FILE}")
         print(f"[INFO] Detailed log at {INGESTION_LOG}")
 
 

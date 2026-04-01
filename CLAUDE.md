@@ -26,6 +26,11 @@ DATABASE_URL=postgresql://... python3 fetch_sbc.py --ticker SNAP
 DATABASE_URL=postgresql://... python3 fetch_historical.py
 DATABASE_URL=postgresql://... python3 fetch_historical.py --ticker SNAP
 DATABASE_URL=postgresql://... python3 fetch_historical.py --force  # re-fetch even if data exists
+
+# Validate ingested data against ground-truth benchmarks + sanity rules
+DATABASE_URL=postgresql://... python3 validate.py
+DATABASE_URL=postgresql://... python3 validate.py --ticker META
+DATABASE_URL=postgresql://... python3 validate.py --heal  # null suspect values in metrics
 ```
 
 ## Schema
@@ -51,6 +56,8 @@ Stores which XBRL tag was dynamically selected per company per concept, how many
 - **Coverage matrix** — after a full ingestion run, `print_coverage_matrix()` prints a GREEN/YELLOW/RED matrix showing % of expected annual periods filled per company × concept; flags cells below 70%.
 - **Upsert preserves existing data** — filings upsert uses `COALESCE(filings.field, EXCLUDED.field)` so existing non-null values are never overwritten. Only null fields get filled. To fix bad data: delete the company's rows first, then re-ingest.
 - **Multi-class share structures** — `extract_shares_outstanding` handles companies with multiple share classes (e.g. META Class A+B, GOOGL Class A+B+C). If no single total tag exists, sums per-class shares outstanding automatically.
+- **Validation layer** — `validate.py` checks ingested data against 20 ground-truth benchmarks (10 companies × SBC + revenue, 5-10% tolerance) and sanity rules (YoY change limits, SBC/revenue ratio bounds, magnitude floors by market cap tier). `--heal` flag nulls suspect values in the metrics table so the UI shows "—" instead of bad numbers.
+- **Prefer-larger-value heuristic** — `fetch_historical.py` uses PREFER_LARGER_VALUE for key concepts (sbc, revenue, etc.): when multiple XBRL tags match with similar scores, picks the largest absolute value since consolidated totals exceed segment subtotals. TAG_BLACKLIST excludes partial-revenue tags (e.g. OtherSalesRevenueNet).
 - **Precomputed metrics table** — ratios stored in DB, not computed on every request.
 - **EDGAR rate limit** — SEC allows ~10 req/sec; we sleep 0.5s between companies to be safe.
 - **EDGAR User-Agent required** — SEC blocks generic agents; use a descriptive User-Agent with contact email.
