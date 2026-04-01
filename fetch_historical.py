@@ -386,98 +386,67 @@ def process_company(cur, company_id, ticker, cik, force=False):
             print(f"    {r['fiscal_year']:<6} {s(r['sbc_expense']):>14} "
                   f"{s(r['revenue']):>14} {shr:>16} {s(r['buyback_spend']):>14}")
 
-    # Validate
-    from validate import run_benchmarks, run_sanity_rules, heal_suspect_values
-    bench = run_benchmarks(cur, ticker_filter=ticker)
-    flags = run_sanity_rules(cur, ticker_filter=ticker)
-    healed = 0
-    if flags:
-        print(f"\n    [{ticker}] {len(flags)} suspect values — healing...")
-        healed = heal_suspect_values(cur, flags)
-        cur.connection.commit()
-        flags_after = run_sanity_rules(cur, ticker_filter=ticker)
-        needs_review = len(flags_after)
-        if needs_review:
-            print(f"    [{ticker}] {needs_review} still suspect after healing")
-    else:
-        needs_review = 0
-
-    bp = bench["passed"]
-    bf = bench["failed"] + bench["missing"]
-    if bf:
-        print(f"    [{ticker}] benchmarks: {bp} passed, {bf} failed")
-    elif bp:
-        print(f"    [{ticker}] benchmarks: {bp}/{bp} passed")
-
     print(f"    [{ticker}] done — {stats['with_sbc']}/{stats['total']} with SBC")
-
-    stats["validation"] = {
-        "bench": bench,
-        "flags": len(flags),
-        "healed": healed,
-        "needs_review": needs_review,
-    }
     return stats
 
 
 # ── Summary report ────────────────────────────────────────────────────────────
 
-def print_summary(all_stats):
+def print_summary(cur, all_stats):
     total_companies = len(all_stats)
     total_filings   = sum(s["total"]    for s in all_stats.values())
     total_sbc       = sum(s["with_sbc"] for s in all_stats.values())
     total_failed    = sum(s["failed"]   for s in all_stats.values())
 
-    total_bench_pass = total_bench_fail = 0
-    total_flags = total_healed = total_review = 0
-    all_bench_details = []
-    for s in all_stats.values():
-        v = s.get("validation", {})
-        b = v.get("bench", {})
-        total_bench_pass += b.get("passed", 0)
-        total_bench_fail += b.get("failed", 0) + b.get("missing", 0)
-        total_flags      += v.get("flags", 0)
-        total_healed     += v.get("healed", 0)
-        total_review     += v.get("needs_review", 0)
-        all_bench_details.extend(b.get("details", []))
+    BOLD = "\033[1m"; RST = "\033[0m"; RED = "\033[91m"
 
-    RED = "\033[91m"; GRN = "\033[92m"; YEL = "\033[93m"
-    BOLD = "\033[1m"; RST = "\033[0m"
-
-    print(f"\n{'='*65}")
-    print(f"{BOLD}INGESTION + VALIDATION SUMMARY{RST}")
-    print(f"{'='*65}")
+    print(f"\n{'='*80}")
+    print(f"{BOLD}INGESTION SUMMARY{RST}")
+    print(f"{'='*80}")
     print(f"  Companies processed : {total_companies}")
     print(f"  Total 10-K filings  : {total_filings}")
     if total_filings:
         print(f"  Filings with SBC    : {total_sbc} ({total_sbc/total_filings*100:.0f}%)")
     print(f"  Failed/no data      : {total_failed}")
-    total_bench = total_bench_pass + total_bench_fail
-    if total_bench:
-        print(f"\n  Benchmark checks    : {total_bench_pass}/{total_bench} passed")
-    print(f"  Sanity flags        : {total_flags} values flagged")
-    print(f"  Self-healed         : {total_healed} values nulled")
-    print(f"  Needs review        : {total_review} still suspect")
 
-    failed_bench = [d for d in all_bench_details if d["status"] != "PASS"]
-    if failed_bench:
-        print(f"\n  {RED}FAILED BENCHMARKS:{RST}")
-        for d in failed_bench:
-            actual = d.get("actual")
-            a = "MISSING" if actual is None else (
-                f"${actual/1e9:.1f}B" if abs(actual) >= 1e9 else f"${actual/1e6:.0f}M")
-            e = d["expected"]
-            ex = f"${e/1e9:.1f}B" if abs(e) >= 1e9 else f"${e/1e6:.0f}M"
-            pct = f" ({d.get('pct_off',0)*100:.0f}% off)" if actual else ""
-            print(f"    {RED}{d['ticker']:<6} FY{d['year']} {d['concept']:<10}: "
-                  f"got {a}, expected {ex}{pct}{RST}")
+    # Coverage report from DB
+    cur.execute("""
+        SELECT c.ticker,
+               COUNT(f.fiscal_year) AS years_found,
+               MIN(f.fiscal_year) AS earliest,
+               MAX(f.fiscal_year) AS latest,
+               (SELECT f2.sbc_expense FROM filings f2
+                WHERE f2.company_id = c.id AND f2.form_type = '10-K'
+                ORDER BY f2.fiscal_year DESC LIMIT 1) AS latest_sbc,
+               (SELECT f2.revenue FROM filings f2
+                WHERE f2.company_id = c.id AND f2.form_type = '10-K'
+                ORDER BY f2.fiscal_year DESC LIMIT 1) AS latest_rev
+        FROM companies c
+        LEFT JOIN filings f ON f.company_id = c.id AND f.form_type = '10-K'
+        GROUP BY c.id, c.ticker
+        ORDER BY c.ticker
+    """)
+    rows = cur.fetchall()
 
-    print(f"\n  Coverage:")
-    for ticker, s in sorted(all_stats.items()):
-        pct = s["with_sbc"] / s["total"] * 100 if s["total"] else 0
-        flag = f"  {RED}<70%{RST}" if pct < 70 else ""
-        print(f"    {ticker:<8} {s['with_sbc']:>3}/{s['total']:<3}  {pct:.0f}%{flag}")
-    print(f"{'='*65}")
+    def fmt(v):
+        if v is None: return "—"
+        v = int(v)
+        if abs(v) >= 1e9: return f"${v/1e9:.1f}B"
+        if abs(v) >= 1e6: return f"${v/1e6:.0f}M"
+        return f"${v:,}"
+
+    print(f"\n  {'Ticker':<8} {'Years':>5} {'Earliest':>9} {'Latest':>7} "
+          f"{'Latest SBC':>12} {'Latest Rev':>12}")
+    print(f"  {'-'*8} {'-'*5} {'-'*9} {'-'*7} {'-'*12} {'-'*12}")
+    for r in rows:
+        yrs = r["years_found"] or 0
+        ear = r["earliest"] or "—"
+        lat = r["latest"] or "—"
+        flag = f" {RED}!{RST}" if yrs == 0 else ""
+        print(f"  {r['ticker']:<8} {yrs:>5} {str(ear):>9} {str(lat):>7} "
+              f"{fmt(r['latest_sbc']):>12} {fmt(r['latest_rev']):>12}{flag}")
+
+    print(f"{'='*80}")
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────
@@ -536,18 +505,7 @@ def main():
             except Exception:
                 pass
 
-    print_summary(all_stats)
-
-    # Final consolidated validation
-    if all_stats:
-        try:
-            from validate import run_benchmarks, run_sanity_rules, print_report
-            print("\n  Final consolidated validation...")
-            bench = run_benchmarks(cur)
-            flags = run_sanity_rules(cur)
-            print_report(bench, flags, healed_count=0)
-        except Exception as e:
-            print(f"[INFO] Final validation skipped: {e}")
+    print_summary(cur, all_stats)
 
     cur.close()
     conn.close()
