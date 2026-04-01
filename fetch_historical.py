@@ -377,17 +377,16 @@ def parse_label_linkbase(xml_bytes):
 
 # ── XBRL instance document parsing ───────────────────────────────────────────
 
-def _normalize(raw_text, decimals_attr):
+def _normalize(raw_text, decimals_attr, debug_tag=None):
     """
     Convert a raw XBRL value to an integer in base dollars.
 
-    decimals="-6" → value is in millions  (multiply by 1,000,000)
-    decimals="-3" → value is in thousands (multiply by 1,000)
-    decimals="0" or "INF" or absent → value is in dollars (no scaling)
+    The decimals attribute is ambiguous in practice:
+    - Some filers use it as a scale indicator (decimals=-6 → value in millions)
+    - Some filers report full dollar values with decimals=-6 as precision hint
 
-    Safety cap: if scaling would produce > $10 trillion, the value was
-    probably already in base dollars (some filers do this) so we skip
-    the scaling.
+    Strategy: if the raw value already looks like a plausible dollar amount
+    (>= 1 million), assume it's in base dollars. Only scale up small values.
     """
     try:
         val = float(raw_text.strip())
@@ -398,6 +397,8 @@ def _normalize(raw_text, decimals_attr):
 
     dec_str = (decimals_attr or "").strip()
     if not dec_str or dec_str in ("INF", "inf"):
+        if debug_tag:
+            print(f"          [DEBUG] {debug_tag}: raw={raw_text.strip()} dec=INF → {int(val)}")
         return int(val)
 
     try:
@@ -405,17 +406,18 @@ def _normalize(raw_text, decimals_attr):
     except (ValueError, TypeError):
         return int(val)
 
-    if dec >= 0:
-        return int(val)
+    result = int(val)
 
-    # Negative decimals: always apply scaling
-    scaled = val * (10 ** abs(dec))
+    if dec < 0 and abs(val) < 1_000_000:
+        # Small value + negative decimals → value is likely in millions/thousands
+        result = int(val * (10 ** abs(dec)))
+    # else: value is already large enough to be in base dollars — no scaling
 
-    # Sanity cap — if result > $10T, value was already in base dollars
-    if abs(scaled) > 10_000_000_000_000:
-        return int(val)
+    if debug_tag:
+        print(f"          [DEBUG] {debug_tag}: raw={raw_text.strip()} dec={dec} "
+              f"abs_val={abs(val):,.0f} scaled={'YES' if result != int(val) else 'NO'} → ${result:,}")
 
-    return int(scaled)
+    return result
 
 
 _XBRL_SKIP = ("_cal.xml", "_def.xml", "_pre.xml", "_ref.xml", "_lab.xml")
@@ -483,8 +485,9 @@ def parse_xbrl_instance(xml_bytes, label_map):
         else:
             continue
 
+        decimals_str = elem.get("decimals", "0")
         if unit_type == "USD":
-            val = _normalize(raw, elem.get("decimals", "0"))
+            val = _normalize(raw, decimals_str)
             if val is None or abs(val) < 1_000:
                 continue
         else:
@@ -506,6 +509,8 @@ def parse_xbrl_instance(xml_bytes, label_map):
             "tag":          local,
             "label":        label,
             "value":        val,
+            "raw_text":     raw,
+            "decimals":     decimals_str,
             "unit_type":    unit_type,
             "period_start": ctx["start"],
             "period_end":   ctx["end"],
@@ -558,6 +563,10 @@ def map_to_concepts(facts, fiscal_year):
                 best_fact  = f
 
         if best_fact and best_score >= 10:
+            # Debug: print raw→normalized for every mapped concept
+            print(f"        [MAP] {concept}: tag={best_fact['tag']} "
+                  f"raw={best_fact.get('raw_text','')} dec={best_fact.get('decimals','')} "
+                  f"→ ${best_fact['value']:,} (score={best_score})")
             results[concept] = {
                 "value":      best_fact["value"],
                 "tag":        best_fact["tag"],
