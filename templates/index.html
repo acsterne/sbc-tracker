@@ -14,18 +14,25 @@
         <div class="card-value">{{ summary.company_count or "—" }}</div>
     </div>
     <div class="card">
-        <div class="card-label">Total SBC (latest year)</div>
+        <div class="card-label">Total SBC — FY{{ summary.latest_year or "—" }}</div>
         <div class="card-value">{{ summary.total_sbc | compact }}</div>
     </div>
     <div class="card">
-        <div class="card-label">Avg SBC % of Revenue</div>
+        <div class="card-label">Avg SBC % of Revenue — FY{{ summary.latest_year or "—" }}</div>
         <div class="card-value">{{ summary.avg_sbc_pct_rev | pct }}</div>
     </div>
     <div class="card">
-        <div class="card-label">Data Source</div>
-        <div class="card-value" style="font-size:14px;padding-top:4px;color:var(--muted)">SEC EDGAR (2009–present)</div>
+        <div class="card-label">Last Updated</div>
+        <div class="card-value" style="font-size:14px;padding-top:4px;color:var(--muted)">
+            {% if summary.last_updated %}
+                {{ summary.last_updated.strftime('%b %d, %Y') }}
+            {% else %}—{% endif %}
+        </div>
     </div>
 </div>
+<p style="color:var(--muted);font-size:12px;margin-top:-20px;margin-bottom:24px;">
+    Showing most recent annual (10-K) filing per company. Each company's year may differ based on when their latest 10-K was filed.
+</p>
 
 <!-- Filters -->
 <div class="filter-bar">

@@ -118,8 +118,11 @@ def index():
         SELECT
             COUNT(DISTINCT company_id) AS company_count,
             SUM(sbc_annual) AS total_sbc,
-            AVG(sbc_pct_revenue) AS avg_sbc_pct_rev
+            AVG(sbc_pct_revenue) AS avg_sbc_pct_rev,
+            MAX(m.fiscal_year) AS latest_year,
+            MAX(f.fetched_at) AS last_updated
         FROM metrics m
+        JOIN filings f ON f.company_id = m.company_id
         WHERE m.fiscal_year = (
             SELECT MAX(m2.fiscal_year) FROM metrics m2 WHERE m2.company_id = m.company_id
         )
