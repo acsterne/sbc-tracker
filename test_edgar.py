@@ -9,78 +9,76 @@ company = Company("META")
 print(f"Company: {company.name} (CIK: {company.cik})")
 
 filings = company.get_filings(form="10-K")
-print(f"\n10-K filings found: {len(filings)}")
+print(f"10-K filings found: {len(filings)}")
 
-# Get the most recent 10-K
-filing = filings[0]
-print(f"\nLatest filing: {filing.filing_date} (period: {filing.period_of_report})")
+# ── Latest filing ─────────────────────────────────────────────────────────────
+filing = filings.latest()
+print(f"\nLatest: filed {filing.filing_date}, period {filing.period_of_report}")
 
-tenk = filing.obj()
-if not tenk:
-    print("ERROR: filing.obj() returned None")
-    exit(1)
+try:
+    xbrl = filing.xbrl()
+    print(f"xbrl() returned: {type(xbrl)}")
+except Exception as e:
+    print(f"xbrl() ERROR: {e}")
+    xbrl = None
 
-print(f"\nHas financials: {hasattr(tenk, 'financials') and tenk.financials is not None}")
-
-if tenk.financials:
-    fin = tenk.financials
-
-    print("\n" + "="*60)
-    print("INCOME STATEMENT")
-    print("="*60)
+if xbrl:
+    print("\n" + "="*70)
+    print("INCOME STATEMENT (latest)")
+    print("="*70)
     try:
-        inc = fin.income_statement
-        if inc:
-            df = inc.to_dataframe()
-            print(df.to_string())
-        else:
-            print("income_statement is None")
+        inc = xbrl.income_statement()
+        df = inc.to_dataframe()
+        print(f"Columns: {list(df.columns)}")
+        print(df.head(30).to_string())
     except Exception as e:
         print(f"ERROR: {e}")
 
-    print("\n" + "="*60)
-    print("CASH FLOW STATEMENT")
-    print("="*60)
+    print("\n" + "="*70)
+    print("CASH FLOW STATEMENT (latest)")
+    print("="*70)
     try:
-        cf = fin.cash_flow_statement
-        if cf:
-            df = cf.to_dataframe()
-            print(df.to_string())
-        else:
-            print("cash_flow_statement is None")
+        cf = xbrl.cash_flow_statement()
+        df = cf.to_dataframe()
+        print(f"Columns: {list(df.columns)}")
+        print(df.head(30).to_string())
     except Exception as e:
         print(f"ERROR: {e}")
 
-    print("\n" + "="*60)
-    print("BALANCE SHEET")
-    print("="*60)
+    print("\n" + "="*70)
+    print("BALANCE SHEET (latest)")
+    print("="*70)
     try:
-        bs = fin.balance_sheet
-        if bs:
-            df = bs.to_dataframe()
-            print(df.to_string())
-        else:
-            print("balance_sheet is None")
+        bs = xbrl.balance_sheet()
+        df = bs.to_dataframe()
+        print(f"Columns: {list(df.columns)}")
+        print(df.head(30).to_string())
     except Exception as e:
         print(f"ERROR: {e}")
-else:
-    print("No financials attribute on 10-K object")
 
-# Also try getting an older filing (FY2019) to test historical
-print("\n\n" + "="*60)
-print("TESTING FY2019 FILING")
-print("="*60)
-for f in filings:
-    if f.period_of_report and "2019" in str(f.period_of_report):
-        print(f"Found: {f.filing_date} (period: {f.period_of_report})")
-        tenk2 = f.obj()
-        if tenk2 and tenk2.financials:
-            cf = tenk2.financials.cash_flow_statement
-            if cf:
-                df = cf.to_dataframe()
-                # Just print rows with "compensation" or "stock" in them
-                for idx, row in df.iterrows():
-                    label = str(idx).lower()
-                    if "compens" in label or "stock" in label or "share" in label:
-                        print(f"  {idx}: {row.to_dict()}")
-        break
+# ── FY2019 filing ─────────────────────────────────────────────────────────────
+print("\n\n" + "="*70)
+print("FY2019 CASH FLOW (looking for SBC ~$4.8B)")
+print("="*70)
+try:
+    filings_list = list(filings)
+    print(f"Total filings to scan: {len(filings_list)}")
+    for f in filings_list:
+        por = str(f.period_of_report or "")
+        if "2019" in por:
+            print(f"Found: filed {f.filing_date}, period {f.period_of_report}")
+            xbrl2 = f.xbrl()
+            if xbrl2:
+                cf2 = xbrl2.cash_flow_statement()
+                df2 = cf2.to_dataframe()
+                print(f"Columns: {list(df2.columns)}")
+                print(df2.to_string())
+            break
+    else:
+        print("No 2019 filing found — printing all periods:")
+        for f in filings_list[:15]:
+            print(f"  {f.filing_date} | {f.period_of_report}")
+except Exception as e:
+    print(f"ERROR: {e}")
+    import traceback
+    traceback.print_exc()
