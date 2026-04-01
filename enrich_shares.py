@@ -1,16 +1,16 @@
 """
-enrich_shares.py — Backfill shares_outstanding by re-reading each 10-K filing.
+enrich_shares.py — Backfill shares_outstanding from 10-K cover page text.
 
-For each filing already fetched via edgartools, opens balance sheet XBRL
-and sums ALL common stock share classes (handles META Class A+B, GOOGL A+B+C).
+Every 10-K is legally required to state shares outstanding on the cover page.
+Extracts via regex from filing.text(), with DEI XBRL fact as fallback.
 
 Usage:
     DATABASE_URL=... python3 enrich_shares.py               # all with gaps
     DATABASE_URL=... python3 enrich_shares.py --ticker META  # one company
-    DATABASE_URL=... python3 enrich_shares.py --all          # all companies (even no gaps)
 """
 
 import os
+import re
 import argparse
 import psycopg2
 import psycopg2.extras
@@ -28,102 +28,108 @@ def get_db():
                             connect_timeout=10)
 
 
-def extract_shares_from_filing(filing, period):
+def get_shares_from_cover_page(filing):
     """
-    Extract total shares outstanding from a 10-K filing's balance sheet.
-    Sums all CommonStock share rows across all classes (A, B, C).
-    Does NOT filter is_breakdown — gets everything.
+    Extract shares outstanding from the cover page text of a 10-K.
+    Falls back to DEI XBRL fact if regex fails.
     """
+    # ── Method 1: cover page text regex ───────────────────────────────────────
+    try:
+        text = filing.text()
+        if text:
+            shares = _parse_shares_from_text(text)
+            if shares:
+                return shares, "cover_page"
+    except Exception as e:
+        print(f"      text() error: {e}")
+
+    # ── Method 2: DEI XBRL fact ───────────────────────────────────────────────
     try:
         xbrl = filing.xbrl()
-        if not xbrl:
-            return None
-    except Exception:
-        return None
-
-    # ── Balance sheet: sum all common stock share classes ──────────────────────
-    try:
-        bs = xbrl.statements.balance_sheet()
-        if not bs:
-            return None
-        df = bs.to_dataframe()
-
-        if "concept" not in df.columns or period not in df.columns:
-            return None
-
-        # Find rows: concept contains CommonStock, exclude value/amount/par rows
-        share_rows = df[
-            df["concept"].str.contains("CommonStock", case=False, na=False) &
-            df["concept"].str.contains("Shares", case=False, na=False) &
-            ~df["concept"].str.contains(
-                "Preferred|Value|Amount|Par|Authorized|Treasury",
-                case=False, na=False
-            )
-        ]
-
-        if share_rows.empty:
-            # Broader fallback: EntityCommonStockSharesOutstanding
-            share_rows = df[
-                df["concept"].str.contains(
-                    "SharesOutstanding|SharesIssued",
-                    case=False, na=False
-                ) &
-                ~df["concept"].str.contains(
-                    "Preferred|Treasury|Authorized",
-                    case=False, na=False
+        if xbrl and hasattr(xbrl, 'instance') and xbrl.instance:
+            try:
+                facts = xbrl.instance.query_facts(
+                    concept="dei:EntityCommonStockSharesOutstanding"
                 )
-            ]
-
-        if share_rows.empty:
-            return None
-
-        vals = share_rows[period].dropna()
-        if vals.empty:
-            return None
-
-        total = vals.sum()
-        if total > 1e6:  # sanity: at least 1M shares
-            return int(total)
-
+                if facts is not None and not facts.empty:
+                    val = float(facts["value"].iloc[0])
+                    if 1e7 < val < 1e11:
+                        return int(val), "dei_xbrl"
+            except Exception:
+                pass
     except Exception:
         pass
 
-    # ── Income statement fallback: weighted average ───────────────────────────
-    try:
-        inc = xbrl.statements.income_statement()
-        if not inc:
-            return None
-        df = inc.to_dataframe()
+    return None, None
 
-        if "concept" not in df.columns or period not in df.columns:
-            return None
 
-        wa_rows = df[
-            df["concept"].str.contains(
-                "WeightedAverageNumberOfSharesOutstandingBasic|"
-                "WeightedAverageNumberOfDilutedSharesOutstanding",
-                case=False, na=False
-            ) &
-            ~df["concept"].str.contains(
-                "Preferred|PerShare|EPS",
-                case=False, na=False
-            )
-        ]
-
-        if not wa_rows.empty:
-            vals = wa_rows[period].dropna()
-            if not vals.empty:
-                v = float(vals.iloc[0])
-                if v > 1e6:
-                    return int(v)
-    except Exception:
-        pass
-
+def _parse_shares_from_text(text):
+    """Parse shares outstanding from cover page text (first 10K chars)."""
+    # Search cover page area
+    for limit in (5000, 10000, 20000):
+        cover = text[:limit].lower()
+        result = _try_patterns(cover)
+        if result:
+            return result
     return None
 
 
+def _try_patterns(text):
+    """Try multiple regex patterns to find share counts."""
+    patterns = [
+        # "15,115,823,000 shares of common stock outstanding"
+        r"([\d,]+)\s+shares\s+of\s+(?:the\s+)?(?:registrant.s?\s+)?common\s+stock[^.]*?outstanding",
+        # "common stock outstanding ... 15,115,823,000"
+        r"common\s+stock[^.]*?outstanding[^.]*?([\d,]{8,})",
+        # "X shares of Class A common stock outstanding"
+        r"([\d,]+)\s+shares\s+of\s+class\s+[a-c]\s+common\s+stock[^.]*?outstanding",
+        # "there were 15,115,823,000 shares ... outstanding"
+        r"(?:there\s+were|were)\s+([\d,]+)\s+(?:shares|common\s+shares)[^.]*?outstanding",
+        # "shares outstanding ... 15,115,823,000"
+        r"shares\s+outstanding[^.]{0,60}?([\d,]{8,})",
+        # "X shares of common stock, par value..."
+        r"([\d,]{8,})\s+shares\s+of\s+(?:our\s+)?common\s+stock",
+    ]
+
+    all_found = []
+
+    for pattern in patterns:
+        matches = re.findall(pattern, text, re.IGNORECASE | re.DOTALL)
+        for match in matches:
+            val_str = match.replace(",", "").strip()
+            try:
+                val = float(val_str)
+                if 1e7 < val < 1e11:
+                    all_found.append(int(val))
+            except (ValueError, TypeError):
+                continue
+
+    if not all_found:
+        return None
+
+    # For multi-class companies (META, GOOGL), the cover page lists
+    # each class separately. Sum all unique large values found.
+    # But avoid double-counting: if one value is roughly the sum of others,
+    # use the larger value (it's the total).
+    all_found = sorted(set(all_found), reverse=True)
+
+    if len(all_found) == 1:
+        return all_found[0]
+
+    # Check if the largest is roughly the sum of the rest (it's a total)
+    largest = all_found[0]
+    rest_sum = sum(all_found[1:])
+    if rest_sum > 0 and 0.8 < largest / rest_sum < 1.2:
+        # Largest ≈ sum of rest → it's a pre-summed total, use it
+        return largest
+
+    # Otherwise sum all (multi-class, no total provided)
+    total = sum(all_found)
+    return total
+
+
 def enrich_company(cur, company_id, ticker):
-    """Fetch all 10-K filings and extract shares for missing years."""
+    """Find missing years, fetch those filings, extract shares from cover page."""
     cur.execute("""
         SELECT fiscal_year FROM filings
         WHERE company_id = %s AND form_type = '10-K' AND shares_outstanding IS NULL
@@ -154,10 +160,10 @@ def enrich_company(cur, company_id, ticker):
             continue
 
         print(f"      FY{fy}...", end=" ")
-        shares = extract_shares_from_filing(filing, period)
+        shares, method = get_shares_from_cover_page(filing)
 
         if shares:
-            print(f"{shares:,}")
+            print(f"{shares:,} ({method})")
             cur.execute("""
                 UPDATE filings SET shares_outstanding = %s
                 WHERE company_id = %s AND fiscal_year = %s AND form_type = '10-K'
@@ -182,10 +188,8 @@ def enrich_company(cur, company_id, ticker):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Backfill shares_outstanding from 10-K balance sheets")
-    parser.add_argument("--ticker", help="Enrich one company only")
-    parser.add_argument("--all", action="store_true",
-                        help="Process all companies, not just those with gaps")
+        description="Backfill shares_outstanding from 10-K cover pages")
+    parser.add_argument("--ticker", help="One company only")
     args = parser.parse_args()
 
     conn = get_db()
@@ -195,8 +199,6 @@ def main():
     if args.ticker:
         cur.execute("SELECT id, ticker FROM companies WHERE ticker = %s",
                     (args.ticker.upper(),))
-    elif args.all:
-        cur.execute("SELECT id, ticker FROM companies ORDER BY ticker")
     else:
         cur.execute("""
             SELECT DISTINCT c.id, c.ticker
@@ -208,10 +210,10 @@ def main():
 
     companies = cur.fetchall()
     if not companies:
-        print("No companies to process")
+        print("No companies with missing shares data")
         return
 
-    print(f"[INFO] {len(companies)} companies\n")
+    print(f"[INFO] {len(companies)} companies with gaps\n")
 
     total_updated = 0
     for co in companies:
