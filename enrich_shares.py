@@ -2,7 +2,8 @@
 enrich_shares.py — Backfill shares_outstanding from 10-K cover page text.
 
 Every 10-K is legally required to state shares outstanding on the cover page.
-Extracts via regex from filing.text(), with DEI XBRL fact as fallback.
+Extracts via regex from filing.text(), applies dynamic split adjustment
+from yfinance, with DEI XBRL fact as fallback.
 
 Usage:
     DATABASE_URL=... python3 enrich_shares.py               # all with gaps
@@ -14,12 +15,50 @@ import re
 import argparse
 import psycopg2
 import psycopg2.extras
+import pandas as pd
+import yfinance as yf
 
 from edgar import Company, set_identity
 set_identity("research@sbctracker.io")
 
 DATABASE_URL = os.environ["DATABASE_URL"]
 START_YEAR = 2009
+
+# Cache split data per ticker so we only call yfinance once
+_split_cache = {}
+
+
+def get_split_multiplier(ticker, fiscal_year):
+    """
+    Get the cumulative split multiplier to adjust a pre-split share count
+    to current (split-adjusted) terms. Uses yfinance splits data.
+    E.g. AAPL FY2013 → multiplier=28 (7:1 in 2014 × 4:1 in 2020).
+    """
+    if ticker not in _split_cache:
+        try:
+            stock = yf.Ticker(ticker)
+            splits = stock.splits
+            if splits is None or splits.empty:
+                _split_cache[ticker] = None
+            else:
+                _split_cache[ticker] = splits
+        except Exception:
+            _split_cache[ticker] = None
+
+    splits = _split_cache[ticker]
+    if splits is None:
+        return 1.0
+
+    # Multiply all splits that happened AFTER this fiscal year end
+    fy_end = pd.Timestamp(f"{fiscal_year}-12-31")
+    future_splits = splits[splits.index > fy_end]
+    if future_splits.empty:
+        return 1.0
+
+    multiplier = 1.0
+    for ratio in future_splits:
+        multiplier *= float(ratio)
+    return multiplier
 
 
 def get_db():
@@ -64,9 +103,10 @@ def get_shares_from_cover_page(filing):
 
 
 def _parse_shares_from_text(text):
-    """Parse shares outstanding from cover page text (first 10K chars)."""
-    # Search cover page area
-    for limit in (5000, 10000, 20000):
+    """Parse shares outstanding from cover page text."""
+    # Search expanding windows — cover page is usually first 5K chars
+    # but some filings have lengthy headers pushing it further
+    for limit in (5000, 10000, 20000, 40000):
         cover = text[:limit].lower()
         result = _try_patterns(cover)
         if result:
@@ -78,17 +118,24 @@ def _try_patterns(text):
     """Try multiple regex patterns to find share counts."""
     patterns = [
         # "15,115,823,000 shares of common stock outstanding"
-        r"([\d,]+)\s+shares\s+of\s+(?:the\s+)?(?:registrant.s?\s+)?common\s+stock[^.]*?outstanding",
+        r"([\d,]+)\s+shares\s+of\s+(?:the\s+)?(?:registrant.s?\s+)?(?:issuer.s?\s+)?common\s+stock[^.]*?outstanding",
         # "common stock outstanding ... 15,115,823,000"
         r"common\s+stock[^.]*?outstanding[^.]*?([\d,]{8,})",
-        # "X shares of Class A common stock outstanding"
+        # "X shares of Class A/B/C common stock outstanding"
         r"([\d,]+)\s+shares\s+of\s+class\s+[a-c]\s+common\s+stock[^.]*?outstanding",
         # "there were 15,115,823,000 shares ... outstanding"
         r"(?:there\s+were|were)\s+([\d,]+)\s+(?:shares|common\s+shares)[^.]*?outstanding",
         # "shares outstanding ... 15,115,823,000"
-        r"shares\s+outstanding[^.]{0,60}?([\d,]{8,})",
+        r"shares\s+outstanding[^.]{0,80}?([\d,]{8,})",
         # "X shares of common stock, par value..."
-        r"([\d,]{8,})\s+shares\s+of\s+(?:our\s+)?common\s+stock",
+        r"([\d,]{8,})\s+shares\s+of\s+(?:our\s+)?(?:the\s+)?(?:issuer.s?\s+)?common\s+stock",
+        # "outstanding: 15,115,823,000" (table format)
+        r"outstanding[:\s]+([\d,]{8,})",
+        # "common stock ... issued and outstanding ... X"
+        r"common\s+stock[^.]*?issued\s+and\s+outstanding[^.]*?([\d,]{8,})",
+        # Looser: any large number near "outstanding" within 100 chars
+        r"([\d,]{10,})[^.]{0,30}?(?:shares|outstanding)",
+        r"(?:shares|outstanding)[^.]{0,30}?([\d,]{10,})",
     ]
 
     all_found = []
@@ -163,17 +210,41 @@ def enrich_company(cur, company_id, ticker):
         shares, method = get_shares_from_cover_page(filing)
 
         if shares:
-            print(f"{shares:,} ({method})")
+            # Apply split adjustment so all years are comparable
+            mult = get_split_multiplier(ticker, fy)
+            adjusted = int(shares * mult)
+            if mult > 1.0:
+                print(f"{shares:,} x{mult:.0f} = {adjusted:,} ({method})")
+            else:
+                print(f"{adjusted:,} ({method})")
+
             cur.execute("""
                 UPDATE filings SET shares_outstanding = %s
                 WHERE company_id = %s AND fiscal_year = %s AND form_type = '10-K'
                   AND shares_outstanding IS NULL
-            """, (shares, company_id, fy))
+            """, (adjusted, company_id, fy))
             if cur.rowcount > 0:
                 updated += 1
                 missing_years.discard(fy)
         else:
-            print("not found")
+            # Debug: print what the cover page looks like for failed extractions
+            try:
+                txt = filing.text()
+                if txt:
+                    # Find the area near "outstanding" or "shares"
+                    lower = txt[:30000].lower()
+                    idx = lower.find("outstanding")
+                    if idx == -1:
+                        idx = lower.find("shares")
+                    if idx >= 0:
+                        snippet = txt[max(0,idx-100):idx+200].replace("\n", " ").strip()
+                        print(f"not found — snippet: ...{snippet[:200]}...")
+                    else:
+                        print(f"not found — no 'outstanding' in first 30K chars")
+                else:
+                    print("not found — text() returned empty")
+            except Exception:
+                print("not found")
 
     if updated > 0:
         from fetch_sbc import refresh_metrics
