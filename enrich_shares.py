@@ -1,13 +1,15 @@
 """
 enrich_shares.py — Backfill shares_outstanding from EDGAR companyfacts API.
 
-Uses edgartools to get historical share counts, applies stock split
-adjustments for known splits, and updates filings rows.
+Uses search_concepts() to find all share-related tags per company,
+merges multiple concepts to maximize year coverage, applies stock
+split adjustments, and updates filings rows.
 
 Usage:
     DATABASE_URL=... python3 enrich_shares.py               # all companies
-    DATABASE_URL=... python3 enrich_shares.py --ticker AAPL  # one company
-    DATABASE_URL=... python3 enrich_shares.py --force        # overwrite existing values
+    DATABASE_URL=... python3 enrich_shares.py --ticker META  # one company
+    DATABASE_URL=... python3 enrich_shares.py --force        # overwrite existing
+    DATABASE_URL=... python3 enrich_shares.py --gaps-only    # only companies with missing data
 """
 
 import os
@@ -20,26 +22,32 @@ set_identity("research@sbctracker.io")
 
 DATABASE_URL = os.environ["DATABASE_URL"]
 
-# Try these concepts in order — first one with data wins
-SHARE_CONCEPTS = [
-    "dei:EntityCommonStockSharesOutstanding",
-    "EntityCommonStockSharesOutstanding",
-    "us-gaap:CommonStockSharesOutstanding",
-    "CommonStockSharesOutstanding",
-    "us-gaap:CommonStockSharesIssued",
-    "CommonStockSharesIssued",
-    "us-gaap:WeightedAverageNumberOfSharesOutstandingBasic",
-    "WeightedAverageNumberOfSharesOutstandingBasic",
+# Concept preference order (higher = preferred when same year has multiple values)
+CONCEPT_PRIORITY = {
+    "CommonStockSharesOutstanding": 100,
+    "EntityCommonStockSharesOutstanding": 95,
+    "CommonStockSharesIssued": 80,
+    "CommonStockSharesIssuedAndOutstanding": 80,
+    "WeightedAverageNumberOfDilutedSharesOutstanding": 60,
+    "WeightedAverageNumberOfSharesOutstandingBasic": 50,
+    "WeightedAverageNumberOfShareOutstandingBasicAndDiluted": 50,
+}
+
+# Labels/keywords to exclude (not actual share counts)
+EXCLUDE_KEYWORDS = [
+    "preferred", "exercise", "grant", "intrinsic", "forfeit",
+    "option", "warrant", "convertible", "treasury", "repurchase",
+    "vested", "nonvested", "restricted", "performance",
+    "price", "cost", "fair value", "compensation",
 ]
 
-# Known stock splits: (ticker, split_year, multiplier)
-# multiplier applies to all years BEFORE split_year
+# Known stock splits
 KNOWN_SPLITS = [
-    ("AMZN",  2022, 20),   # 20:1 June 2022
-    ("GOOGL", 2022, 20),   # 20:1 July 2022
-    ("TSLA",  2022, 3),    # 3:1 August 2022
-    ("AAPL",  2020, 4),    # 4:1 August 2020
-    ("AAPL",  2014, 7),    # 7:1 June 2014
+    ("AMZN",  2022, 20),
+    ("GOOGL", 2022, 20),
+    ("TSLA",  2022, 3),
+    ("AAPL",  2020, 4),
+    ("AAPL",  2014, 7),
 ]
 
 
@@ -50,33 +58,43 @@ def get_db():
 
 
 def apply_split_adjustments(ticker, shares_by_year):
-    """
-    Apply known stock split multipliers so all years are comparable.
-    Multiplies pre-split years by the split ratio.
-    """
     splits = [(yr, mult) for t, yr, mult in KNOWN_SPLITS if t == ticker]
     if not splits:
         return shares_by_year
-
-    # Sort splits chronologically
     splits.sort()
     adjusted = dict(shares_by_year)
-
     for split_year, multiplier in splits:
         for fy in list(adjusted.keys()):
             if fy < split_year:
                 adjusted[fy] = int(adjusted[fy] * multiplier)
-
-    applied = [(yr, m) for yr, m in splits]
-    print(f"    [SPLIT] applied: {applied}")
-
+    print(f"    [SPLIT] {[(yr, f'{m}x') for yr, m in splits]}")
     return adjusted
+
+
+def get_concept_priority(concept_name):
+    """Score a concept name — higher means more preferred."""
+    for key, score in CONCEPT_PRIORITY.items():
+        if key.lower() in concept_name.lower():
+            return score
+    return 10  # unknown concepts get low priority
+
+
+def is_valid_share_concept(concept):
+    """Filter out concepts that aren't actual share counts."""
+    label = str(getattr(concept, 'label', '') or concept).lower()
+    name = str(getattr(concept, 'name', '') or str(concept)).lower()
+    combined = label + " " + name
+
+    for kw in EXCLUDE_KEYWORDS:
+        if kw in combined:
+            return False
+    return True
 
 
 def get_shares_from_facts(ticker):
     """
-    Pull shares outstanding from EDGAR companyfacts via edgartools.
-    Tries multiple concept names in order, returns first that works.
+    Find all share-count concepts via search_concepts(), merge by fiscal year,
+    preferring higher-priority concepts when multiple have data for same year.
     Returns dict: {fiscal_year: shares_value}
     """
     company = Company(ticker)
@@ -86,25 +104,87 @@ def get_shares_from_facts(ticker):
         print(f"    [WARN] get_facts() failed: {e}")
         return {}
 
-    shares_by_year = {}
-
-    # ── Method 1: time_series() for each concept ─────────────────────────────
-    for concept in SHARE_CONCEPTS:
+    # ── Find candidate concepts via search_concepts ───────────────────────────
+    candidates = []
+    for query in ["shares outstanding", "shares issued", "shares basic"]:
         try:
-            df = facts.time_series(concept, periods=40)
+            results = facts.search_concepts(query)
+            if results:
+                candidates.extend(results)
+        except Exception:
+            continue
+
+    if not candidates:
+        print(f"    [WARN] search_concepts found nothing")
+        # Fall back to direct time_series attempts
+        return _fallback_time_series(facts)
+
+    # Deduplicate by concept name
+    seen = set()
+    unique = []
+    for c in candidates:
+        name = str(getattr(c, 'name', c))
+        if name not in seen:
+            seen.add(name)
+            unique.append(c)
+
+    # Filter to valid share-count concepts
+    valid = [c for c in unique if is_valid_share_concept(c)]
+    print(f"    search_concepts: {len(candidates)} found, {len(valid)} valid after filtering")
+
+    # ── Extract data from each valid concept ──────────────────────────────────
+    # shares_by_year: {fy: (priority, value)}
+    merged = {}
+
+    for concept in valid:
+        concept_name = str(getattr(concept, 'name', concept))
+        priority = get_concept_priority(concept_name)
+
+        # Try time_series with the concept name
+        years_found = _extract_years_from_concept(facts, concept_name)
+
+        if years_found:
+            print(f"      {concept_name}: {len(years_found)} years "
+                  f"({min(years_found)}–{max(years_found)}) priority={priority}")
+
+            for fy, val in years_found.items():
+                if fy not in merged or priority > merged[fy][0]:
+                    merged[fy] = (priority, val)
+
+    shares_by_year = {fy: val for fy, (_, val) in merged.items()}
+
+    if shares_by_year:
+        print(f"    merged: {len(shares_by_year)} years "
+              f"({min(shares_by_year)}–{max(shares_by_year)})")
+
+    return shares_by_year
+
+
+def _extract_years_from_concept(facts, concept_name):
+    """Try time_series() for a concept, return {fy: value} dict."""
+    # Try with and without namespace prefix
+    names_to_try = [concept_name]
+    if ":" not in concept_name:
+        names_to_try = [
+            f"dei:{concept_name}",
+            f"us-gaap:{concept_name}",
+            concept_name,
+        ]
+
+    for name in names_to_try:
+        try:
+            df = facts.time_series(name, periods=40)
             if df is None or df.empty:
                 continue
-            print(f"    time_series({concept}): {len(df)} rows")
 
             if "fiscal_period" in df.columns:
                 annual = df[df["fiscal_period"] == "FY"]
             else:
                 annual = df
 
+            years = {}
             for _, row in annual.iterrows():
                 fy = None
-                val = None
-
                 for col in ("fiscal_year", "fy"):
                     if col in row.index and row[col]:
                         try:
@@ -125,87 +205,42 @@ def get_shares_from_facts(ticker):
                     if col in row.index:
                         try:
                             val = int(float(row[col]))
+                            if val > 0 and fy:
+                                if fy not in years or val > years[fy]:
+                                    years[fy] = val
                         except (ValueError, TypeError):
                             pass
                         break
 
-                if fy and val and val > 0:
-                    if fy not in shares_by_year or val > shares_by_year[fy]:
-                        shares_by_year[fy] = val
-
-            if shares_by_year:
-                print(f"    got {len(shares_by_year)} years via time_series({concept})")
-                return shares_by_year
+            if years:
+                return years
 
         except Exception:
             continue
 
-    # ── Method 2: to_dataframe() + filter ─────────────────────────────────────
-    try:
-        df = facts.to_dataframe()
-        if df is not None and not df.empty:
-            concept_col = next((c for c in ("concept", "tag", "name") if c in df.columns), None)
-            if concept_col:
-                for concept_name in ["SharesOutstanding", "SharesIssued",
-                                     "WeightedAverageNumberOfSharesOutstandingBasic"]:
-                    mask = df[concept_col].str.contains(concept_name, case=False, na=False)
-                    sub = df[mask]
-                    if sub.empty:
-                        continue
+    return {}
 
-                    form_col = next((c for c in sub.columns if c.lower() in ("form", "form_type")), None)
-                    if form_col:
-                        sub = sub[sub[form_col].isin(["10-K", "10-K/A"])]
 
-                    if "fiscal_period" in sub.columns:
-                        fy_sub = sub[sub["fiscal_period"] == "FY"]
-                        if not fy_sub.empty:
-                            sub = fy_sub
-
-                    val_col = next((c for c in sub.columns
-                                    if c.lower() in ("numeric_value", "value", "val")), None)
-                    fy_col = next((c for c in sub.columns
-                                   if c.lower() in ("fiscal_year", "fy")), None)
-                    end_col = next((c for c in sub.columns
-                                    if c.lower() in ("period_end", "end")), None)
-
-                    if not val_col:
-                        continue
-
-                    for _, row in sub.iterrows():
-                        fy = None
-                        if fy_col:
-                            try:
-                                fy = int(row[fy_col])
-                            except (ValueError, TypeError):
-                                pass
-                        if fy is None and end_col:
-                            try:
-                                fy = int(str(row[end_col])[:4])
-                            except (ValueError, TypeError):
-                                pass
-                        if fy is None:
-                            continue
-                        try:
-                            val = int(float(row[val_col]))
-                        except (ValueError, TypeError):
-                            continue
-                        if val <= 0:
-                            continue
-                        if fy not in shares_by_year or val > shares_by_year[fy]:
-                            shares_by_year[fy] = val
-
-                    if shares_by_year:
-                        print(f"    got {len(shares_by_year)} years via to_dataframe({concept_name})")
-                        return shares_by_year
-    except Exception as e:
-        print(f"    to_dataframe() failed: {e}")
-
-    return shares_by_year
+def _fallback_time_series(facts):
+    """Direct time_series attempts if search_concepts returns nothing."""
+    FALLBACK_CONCEPTS = [
+        "dei:EntityCommonStockSharesOutstanding",
+        "EntityCommonStockSharesOutstanding",
+        "us-gaap:CommonStockSharesOutstanding",
+        "CommonStockSharesOutstanding",
+        "us-gaap:CommonStockSharesIssued",
+        "us-gaap:WeightedAverageNumberOfSharesOutstandingBasic",
+        "us-gaap:WeightedAverageNumberOfDilutedSharesOutstanding",
+    ]
+    for concept in FALLBACK_CONCEPTS:
+        years = _extract_years_from_concept(facts, concept)
+        if years:
+            print(f"    fallback hit: {concept} ({len(years)} years)")
+            return years
+    return {}
 
 
 def enrich_company(cur, company_id, ticker, force=False):
-    """Backfill shares_outstanding for filings."""
     if force:
         cur.execute("""
             SELECT fiscal_year FROM filings
@@ -220,9 +255,8 @@ def enrich_company(cur, company_id, ticker, force=False):
         """, (company_id,))
 
     target_years = [r["fiscal_year"] for r in cur.fetchall()]
-
     if not target_years:
-        print(f"    no target years — skip")
+        print(f"    no gaps — skip")
         return 0
 
     print(f"    {len(target_years)} years to fill: {target_years[0]}–{target_years[-1]}")
@@ -232,14 +266,8 @@ def enrich_company(cur, company_id, ticker, force=False):
         print(f"    [WARN] no shares data found")
         return 0
 
-    # Apply split adjustments
     shares_by_year = apply_split_adjustments(ticker, shares_by_year)
 
-    # Show what we got
-    for fy in sorted(shares_by_year):
-        print(f"      FY{fy}: {shares_by_year[fy]:,}")
-
-    # Update DB
     updated = 0
     for fy in target_years:
         shares = shares_by_year.get(fy)
@@ -263,6 +291,8 @@ def enrich_company(cur, company_id, ticker, force=False):
         from fetch_sbc import refresh_metrics
         refresh_metrics(cur, company_id)
         print(f"    updated {updated} years")
+    else:
+        print(f"    0 new values (data didn't match target years)")
 
     return updated
 
@@ -272,15 +302,28 @@ def main():
         description="Backfill shares_outstanding from EDGAR facts API")
     parser.add_argument("--ticker", help="Enrich one company only")
     parser.add_argument("--force", action="store_true",
-                        help="Overwrite existing shares values (for split adjustments)")
+                        help="Overwrite existing shares values")
+    parser.add_argument("--gaps-only", action="store_true",
+                        help="Only process companies with missing shares data")
     args = parser.parse_args()
 
     conn = get_db()
     conn.autocommit = False
     cur = conn.cursor()
 
-    cur.execute("SELECT id, ticker, cik FROM companies ORDER BY ticker")
-    companies = cur.fetchall()
+    if args.gaps_only:
+        cur.execute("""
+            SELECT DISTINCT c.id, c.ticker, c.cik
+            FROM companies c
+            JOIN filings f ON f.company_id = c.id AND f.form_type = '10-K'
+            WHERE f.shares_outstanding IS NULL
+            ORDER BY c.ticker
+        """)
+        companies = cur.fetchall()
+        print(f"[INFO] {len(companies)} companies with gaps")
+    else:
+        cur.execute("SELECT id, ticker, cik FROM companies ORDER BY ticker")
+        companies = cur.fetchall()
 
     if args.ticker:
         companies = [c for c in companies
@@ -301,37 +344,34 @@ def main():
             print(f"    [ERROR] {e}")
             conn.rollback()
 
-    # Summary
-    print(f"\n{'='*60}")
+    # Coverage summary
+    print(f"\n{'='*70}")
     print(f"SHARES ENRICHMENT — {total_updated} values updated")
-    print(f"{'='*60}")
+    print(f"{'='*70}")
 
     cur.execute("""
         SELECT c.ticker,
                COUNT(*) AS total,
                COUNT(f.shares_outstanding) AS with_shares,
-               MIN(CASE WHEN f.shares_outstanding IS NOT NULL THEN f.fiscal_year END) AS earliest,
-               MAX(CASE WHEN f.shares_outstanding IS NOT NULL THEN f.fiscal_year END) AS latest,
-               (SELECT f2.shares_outstanding FROM filings f2
-                WHERE f2.company_id = c.id AND f2.form_type = '10-K'
-                  AND f2.shares_outstanding IS NOT NULL
-                ORDER BY f2.fiscal_year DESC LIMIT 1) AS latest_shares
+               COUNT(*) - COUNT(f.shares_outstanding) AS missing,
+               MIN(CASE WHEN f.shares_outstanding IS NULL THEN f.fiscal_year END) AS first_gap,
+               MAX(CASE WHEN f.shares_outstanding IS NULL THEN f.fiscal_year END) AS last_gap
         FROM companies c
         JOIN filings f ON f.company_id = c.id AND f.form_type = '10-K'
         GROUP BY c.id, c.ticker
-        ORDER BY c.ticker
+        ORDER BY (COUNT(*) - COUNT(f.shares_outstanding)) DESC, c.ticker
     """)
     rows = cur.fetchall()
 
-    print(f"\n  {'Ticker':<8} {'Shares':>8} {'/ Tot':>6} {'Earliest':>9} {'Latest':>7} {'Latest Shares':>16}")
-    print(f"  {'-'*8} {'-'*8} {'-'*6} {'-'*9} {'-'*7} {'-'*16}")
+    print(f"\n  {'Ticker':<8} {'Has':>4} {'/ Tot':>6} {'Miss':>5} {'Gap Range':>14}")
+    print(f"  {'-'*8} {'-'*4} {'-'*6} {'-'*5} {'-'*14}")
     for r in rows:
-        shr = f"{r['latest_shares']/1e9:.2f}B" if r['latest_shares'] else "—"
-        ear = r['earliest'] or "—"
-        lat = r['latest'] or "—"
-        flag = " !" if r['with_shares'] == 0 else ""
-        print(f"  {r['ticker']:<8} {r['with_shares']:>8} / {r['total']:<4} "
-              f"{str(ear):>9} {str(lat):>7} {shr:>16}{flag}")
+        missing = r["missing"]
+        gap = ""
+        if missing > 0:
+            gap = f"{r['first_gap']}–{r['last_gap']}"
+        flag = " !" if missing > 0 else ""
+        print(f"  {r['ticker']:<8} {r['with_shares']:>4} / {r['total']:<4} {missing:>5} {gap:>14}{flag}")
 
     cur.close()
     conn.close()
