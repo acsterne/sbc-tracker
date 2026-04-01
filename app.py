@@ -90,7 +90,8 @@ def index():
     else:
         year_filter = """
             AND m.fiscal_year = (
-                SELECT MAX(m2.fiscal_year) FROM metrics m2 WHERE m2.company_id = m.company_id
+                SELECT MAX(m2.fiscal_year) FROM metrics m2
+                WHERE m2.company_id = m.company_id AND m2.sbc_annual IS NOT NULL
             )
         """
 
