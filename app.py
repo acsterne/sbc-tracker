@@ -116,7 +116,7 @@ def index():
     # Summary stats for the header cards
     cur.execute("""
         SELECT
-            COUNT(DISTINCT company_id) AS company_count,
+            COUNT(DISTINCT m.company_id) AS company_count,
             SUM(sbc_annual) AS total_sbc,
             AVG(sbc_pct_revenue) AS avg_sbc_pct_rev,
             MAX(m.fiscal_year) AS latest_year,
