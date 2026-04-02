@@ -257,7 +257,10 @@ def _tag_matches_concept(tag, concept):
     elif concept == "revenue":
         if not any(kw in t for kw in ["revenue", "sales", "turnover"]):
             return False, 0
-        for excl in ["costof", "deferred", "unearned", "backlog", "remaining"]:
+        for excl in ["costof", "deferred", "unearned", "backlog", "remaining",
+                     "proceeds", "maturities", "securities", "investment",
+                     "availableforsale", "heldtomaturity", "fairvalue",
+                     "increasedecrease"]:
             if excl in t:
                 return False, 0
         # "contract" is only ok when the tag also contains "revenue"
