@@ -48,7 +48,7 @@ DATABASE_URL=postgresql://... python3 validate.py --heal  # null suspect values 
 ## Schema
 
 ### `companies`
-Master list of tracked companies — ticker, name, CIK (SEC identifier), sector, IPO year.
+Master list of tracked companies — ticker, name, CIK (SEC identifier), sector, IPO year, fy_end_month (fiscal year end month, 1-12; displayed on company detail page for non-December FY companies).
 
 ### `filings`
 One row per company per period (annual 10-K and quarterly 10-Q). Raw financials: SBC expense, revenue, gross profit, net income, shares outstanding, shares repurchased, buyback spend. Also stores SBC by function (sbc_cogs, sbc_rd, sbc_sm, sbc_ga), unrecognized_sbc (future expense from unvested awards), ebitda (plus operating_income and depreciation_amortization components for auditability), data_source, and confidence. Unique on (company_id, fiscal_year, form_type).
