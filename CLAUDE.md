@@ -28,10 +28,11 @@ DATABASE_URL=postgresql://... python3 fetch_historical.py --ticker SNAP
 DATABASE_URL=postgresql://... python3 fetch_historical.py --force  # re-fetch even if data exists
 DATABASE_URL=postgresql://... python3 fetch_historical.py --reset-checkpoint  # clear checkpoint and start fresh
 
-# Backfill null shares_outstanding from 10-K cover page text (regex + DEI XBRL fallback)
+# Backfill null shares_outstanding (3-source cascade: DEI API → us-gaap API → 10-K cover page regex)
 DATABASE_URL=postgresql://... python3 enrich_shares.py
 DATABASE_URL=postgresql://... python3 enrich_shares.py --ticker META
 DATABASE_URL=postgresql://... python3 enrich_shares.py --all  # process all companies, even those with no gaps
+# Note: for stubborn gaps, fetch_historical.py can also fill shares via edgartools 10-K parsing
 
 # Fetch stock prices from Yahoo Finance and compute market cap metrics
 DATABASE_URL=postgresql://... python3 fetch_prices.py
@@ -66,7 +67,7 @@ Stores which XBRL tag was dynamically selected per company per concept, how many
 - **XBRL concept merge** — each metric (SBC, revenue, etc.) iterates a priority-ordered list of XBRL concept names and merges data across all matching concepts. Earlier concepts win for the same period; later concepts fill gaps. Handles companies that switch XBRL tags between years (e.g. Alphabet revenue).
 - **Coverage matrix** — after a full ingestion run, `print_coverage_matrix()` prints a GREEN/YELLOW/RED matrix showing % of expected annual periods filled per company × concept; flags cells below 70%.
 - **Upsert preserves existing data** — filings upsert uses `COALESCE(filings.field, EXCLUDED.field)` so existing non-null values are never overwritten. Only null fields get filled. To fix bad data: delete the company's rows first, then re-ingest.
-- **Share enrichment (3-source cascade)** — `enrich_shares.py` fills NULL `shares_outstanding` in 10-K filings using three sources in priority order: (1) DEI `EntityCommonStockSharesOutstanding` from companyfacts API, (2) us-gaap `CommonStockSharesOutstanding` from companyfacts API (sums multi-class shares by accession, takes most recently filed), (3) 10-K cover page regex via edgartools (final fallback). Only updates NULL rows.
+- **Share enrichment (3-source cascade + brute force)** — `enrich_shares.py` fills NULL `shares_outstanding` in 10-K filings using three sources in priority order: (1) DEI `EntityCommonStockSharesOutstanding` from companyfacts API, (2) us-gaap `CommonStockSharesOutstanding` from companyfacts API (sums multi-class shares by accession, takes most recently filed), (3) 10-K cover page regex via edgartools (final fallback). Only updates NULL rows. For remaining gaps, `fetch_historical.py` can also extract shares from the balance sheet of each 10-K filing via edgartools parsing (slower but more thorough).
 - **Validation layer** — `validate.py` checks ingested data against 20 ground-truth benchmarks (10 companies × SBC + revenue, 5-10% tolerance) and sanity rules (YoY change limits, SBC/revenue ratio bounds, magnitude floors by market cap tier). `--heal` flag nulls suspect values in the metrics table so the UI shows "—" instead of bad numbers.
 - **Stock price enrichment** — `fetch_prices.py` fetches historical year-end stock prices from Yahoo Finance (yfinance). Uses EDGAR companyfacts `end` dates to determine each company's fiscal year end, then looks up the closing price on or before that date. Computes market_cap (shares × price) and sbc_pct_market_cap. Stores in the metrics table.
 - **Precomputed metrics table** — ratios stored in DB, not computed on every request.
