@@ -26,10 +26,10 @@ COMPANIES = [
     {"ticker": "HUBS",  "name": "HubSpot",            "cik": "0001404655",  "sector": "SaaS", "ipo_year": 2014},
     {"ticker": "OKTA",  "name": "Okta",               "cik": "0001660134",  "sector": "SaaS", "ipo_year": 2017},
     {"ticker": "CFLT",  "name": "Confluent",          "cik": "0001764046",  "sector": "SaaS", "ipo_year": 2021},
-    {"ticker": "GTLB",  "name": "GitLab",             "cik": "0001653558",  "sector": "SaaS", "ipo_year": 2021},
+    {"ticker": "GTLB",  "name": "GitLab",             "cik": "0001653482",  "sector": "SaaS", "ipo_year": 2021},
     {"ticker": "ESTC",  "name": "Elastic",            "cik": "0001707753",  "sector": "SaaS", "ipo_year": 2018},
     {"ticker": "DOCN",  "name": "DigitalOcean",       "cik": "0001582961",  "sector": "SaaS", "ipo_year": 2021},
-    {"ticker": "TWLO",  "name": "Twilio",             "cik": "0001447362",  "sector": "SaaS", "ipo_year": 2016},
+    {"ticker": "TWLO",  "name": "Twilio",             "cik": "0001447669",  "sector": "SaaS", "ipo_year": 2016},
     {"ticker": "ZM",    "name": "Zoom",               "cik": "0001585521",  "sector": "SaaS", "ipo_year": 2019},
     {"ticker": "TEAM",  "name": "Atlassian",          "cik": "0001650372",  "sector": "SaaS", "ipo_year": 2015},
     {"ticker": "COUP",  "name": "Coupa Software",     "cik": "0001385867",  "sector": "SaaS", "ipo_year": 2016},
@@ -42,14 +42,14 @@ COMPANIES = [
 
     # ── AI / Neo-Cloud ─────────────────────────────────────────────────────────
     {"ticker": "PLTR",  "name": "Palantir",           "cik": "0001321655",  "sector": "AI / Neo-Cloud", "ipo_year": 2020},
-    {"ticker": "AI",    "name": "C3.ai",              "cik": "0001577552",  "sector": "AI / Neo-Cloud", "ipo_year": 2020},
-    {"ticker": "SOUN",  "name": "SoundHound AI",      "cik": "0001840292",  "sector": "AI / Neo-Cloud", "ipo_year": 2022},
+    {"ticker": "AI",    "name": "C3.ai",              "cik": "0001577526",  "sector": "AI / Neo-Cloud", "ipo_year": 2020},
+    {"ticker": "SOUN",  "name": "SoundHound AI",      "cik": "0001840856",  "sector": "AI / Neo-Cloud", "ipo_year": 2022},
     {"ticker": "CRWV",  "name": "CoreWeave",          "cik": "0001769628",  "sector": "AI / Neo-Cloud", "ipo_year": 2025},
-    {"ticker": "BBAI",  "name": "BigBear.ai",         "cik": "0001836935",  "sector": "AI / Neo-Cloud", "ipo_year": 2021},
+    {"ticker": "BBAI",  "name": "BigBear.ai",         "cik": "0001836981",  "sector": "AI / Neo-Cloud", "ipo_year": 2021},
 
     # ── Notable SBC cases (for editorial context) ──────────────────────────────
     {"ticker": "SNAP",  "name": "Snap",               "cik": "0001564408",  "sector": "Social / Consumer", "ipo_year": 2017},
-    {"ticker": "PINS",  "name": "Pinterest",          "cik": "0001506439",  "sector": "Social / Consumer", "ipo_year": 2019},
+    {"ticker": "PINS",  "name": "Pinterest",          "cik": "0001506293",  "sector": "Social / Consumer", "ipo_year": 2019},
     {"ticker": "LYFT",  "name": "Lyft",               "cik": "0001759509",  "sector": "Social / Consumer", "ipo_year": 2019},
     {"ticker": "UBER",  "name": "Uber",               "cik": "0001543151",  "sector": "Social / Consumer", "ipo_year": 2019},
     {"ticker": "ABNB",  "name": "Airbnb",             "cik": "0001559720",  "sector": "Social / Consumer", "ipo_year": 2020},
