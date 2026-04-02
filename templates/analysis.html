@@ -34,7 +34,7 @@
 <div class="card" style="margin-bottom:20px;">
     <div style="font-weight:600;margin-bottom:4px;font-size:13px;">Paying for Growth</div>
     <div style="color:var(--muted);font-size:11px;margin-bottom:12px;">
-        Bubble = SBC % revenue vs revenue growth. Size = SBC dollars. Top-left = diluting without growth.
+        SBC % revenue (cost) vs revenue growth (outcome). Bubble size = SBC dollars. Top-left = efficient growth. Bottom-right = diluting without growth.
     </div>
     <div style="font-size:10px;color:var(--muted);margin-bottom:8px;">
         <span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#8b5cf6;"></span> Mega Cap
@@ -108,9 +108,8 @@ const axisStyle = { ticks: { color: '#6b7280', font: { size: 11 } }, grid: { col
 // ── Chart 1: Scatter — Paying for Growth ─────────────────────────────────────
 const scatterData = RAW.filter(d => d.sbc_pct_rev > 0 && d.growth !== null);
 
-// Dynamic Y max: cap at 45% or highest value * 1.15
+// X axis: SBC % Rev (the cost). Y axis: Revenue Growth (the outcome).
 const maxPct = Math.min(45, Math.max(...scatterData.map(d => d.sbc_pct_rev)) * 1.15);
-// X range: -30 to 100 (or higher if needed)
 const maxGrowth = Math.min(200, Math.max(100, Math.max(...scatterData.map(d => d.growth)) * 1.1));
 
 // Medians for quadrant dividers
@@ -137,8 +136,8 @@ new Chart(document.getElementById('scatterChart'), {
         datasets: scatterData.map(d => ({
             label: d.ticker,
             data: [{
-                x: Math.min(d.growth, maxGrowth),
-                y: Math.min(d.sbc_pct_rev, maxPct),
+                x: Math.min(d.sbc_pct_rev, maxPct),
+                y: Math.min(d.growth, maxGrowth),
                 r: bubbleR(d.sbc)
             }],
             backgroundColor: sectorColor(d.sector) + 'bb',
@@ -169,11 +168,11 @@ new Chart(document.getElementById('scatterChart'), {
         },
         scales: {
             x: { ...axisStyle,
-                 title: { display: true, text: 'Revenue Growth YoY %', color: '#6b7280' },
-                 min: -30, max: maxGrowth },
-            y: { ...axisStyle,
                  title: { display: true, text: 'SBC % of Revenue', color: '#6b7280' },
-                 min: 0, max: maxPct }
+                 min: 0, max: maxPct },
+            y: { ...axisStyle,
+                 title: { display: true, text: 'Revenue Growth YoY %', color: '#6b7280' },
+                 min: -30, max: maxGrowth }
         }
     },
     plugins: [{
@@ -183,19 +182,19 @@ new Chart(document.getElementById('scatterChart'), {
             const yAxis = chart.scales.y;
             ctx.save();
             // Quadrant shading
-            const xMid = xAxis.getPixelForValue(medGr);
-            const yMid = yAxis.getPixelForValue(medPct);
-            // Top-left: red shade
-            ctx.fillStyle = 'rgba(239,68,68,0.04)';
+            const xMid = xAxis.getPixelForValue(medPct);
+            const yMid = yAxis.getPixelForValue(medGr);
+            // Top-left: green (high growth, low SBC = efficient)
+            ctx.fillStyle = 'rgba(34,197,94,0.04)';
             ctx.fillRect(xAxis.left, yAxis.top, xMid - xAxis.left, yMid - yAxis.top);
-            // Top-right: yellow shade
+            // Top-right: yellow (high growth, high SBC = expensive growth)
             ctx.fillStyle = 'rgba(234,179,8,0.04)';
             ctx.fillRect(xMid, yAxis.top, xAxis.right - xMid, yMid - yAxis.top);
-            // Bottom-left: grey shade
+            // Bottom-left: grey (low growth, low SBC = cheap & slow)
             ctx.fillStyle = 'rgba(107,114,128,0.03)';
             ctx.fillRect(xAxis.left, yMid, xMid - xAxis.left, yAxis.bottom - yMid);
-            // Bottom-right: green shade
-            ctx.fillStyle = 'rgba(34,197,94,0.04)';
+            // Bottom-right: red (low growth, high SBC = worst)
+            ctx.fillStyle = 'rgba(239,68,68,0.04)';
             ctx.fillRect(xMid, yMid, xAxis.right - xMid, yAxis.bottom - yMid);
             // Divider lines
             ctx.strokeStyle = '#d1d5db';
@@ -208,10 +207,10 @@ new Chart(document.getElementById('scatterChart'), {
             ctx.font = '11px -apple-system, sans-serif';
             ctx.fillStyle = '#9ca3af';
             ctx.textAlign = 'left';
-            ctx.fillText('Expensive & Slow', xAxis.left + 8, yAxis.top + 16);
+            ctx.fillText('Efficient Growth', xAxis.left + 8, yAxis.top + 16);
             ctx.fillText('Expensive & Fast', xMid + 8, yAxis.top + 16);
             ctx.fillText('Cheap & Slow', xAxis.left + 8, yAxis.bottom - 8);
-            ctx.fillText('Efficient Growth', xMid + 8, yAxis.bottom - 8);
+            ctx.fillText('Expensive & Slow', xMid + 8, yAxis.bottom - 8);
             // Ticker labels — only on large bubbles
             ctx.font = 'bold 10px -apple-system, sans-serif';
             ctx.fillStyle = '#1f2937';
