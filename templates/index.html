@@ -74,7 +74,7 @@
         <tr>
             {% macro sort_header(col, label, tip='') %}
                 {% set next_order = 'asc' if (sort == col and order == 'desc') else 'desc' %}
-                <th{% if tip %} class="tip" title="{{ tip }}"{% endif %}>
+                <th{% if tip %} class="tip" data-tip="{{ tip }}"{% endif %}>
                     <a href="?sort={{ col }}&order={{ next_order }}&year={{ year }}&sector={{ sector }}"
                        class="{% if sort == col %}sort-{{ order }}{% endif %}">
                         {{ label }}
