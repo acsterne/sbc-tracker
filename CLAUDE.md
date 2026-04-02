@@ -7,7 +7,7 @@ Flask + PostgreSQL app tracking stock-based compensation across public tech comp
 - **Database:** PostgreSQL via psycopg2 (raw SQL, no ORM)
 - **Frontend:** Jinja2 templates, vanilla JS, Chart.js via CDN, no build step
 - **Hosting:** Railway (`railway.toml`, `Procfile`)
-- **Data source:** SEC EDGAR XBRL API (`data.sec.gov/api/xbrl/companyfacts/`), edgartools library for historical ingestion
+- **Data source:** SEC EDGAR XBRL API (`data.sec.gov/api/xbrl/companyfacts/`), edgartools library for historical ingestion and shares outstanding
 
 ## Running locally
 ```bash
@@ -28,10 +28,10 @@ DATABASE_URL=postgresql://... python3 fetch_historical.py --ticker SNAP
 DATABASE_URL=postgresql://... python3 fetch_historical.py --force  # re-fetch even if data exists
 DATABASE_URL=postgresql://... python3 fetch_historical.py --reset-checkpoint  # clear checkpoint and start fresh
 
-# Backfill null shares_outstanding from EDGAR facts API
+# Backfill null shares_outstanding from 10-K cover page text (regex + DEI XBRL fallback)
 DATABASE_URL=postgresql://... python3 enrich_shares.py
 DATABASE_URL=postgresql://... python3 enrich_shares.py --ticker META
-DATABASE_URL=postgresql://... python3 enrich_shares.py --force  # overwrite existing shares values (needed to apply split adjustments)
+DATABASE_URL=postgresql://... python3 enrich_shares.py --all  # process all companies, even those with no gaps
 
 # validate.py runs standalone for checking data quality after ingestion:
 # Validate ingested data against ground-truth benchmarks + sanity rules
@@ -62,8 +62,7 @@ Stores which XBRL tag was dynamically selected per company per concept, how many
 - **XBRL concept merge** — each metric (SBC, revenue, etc.) iterates a priority-ordered list of XBRL concept names and merges data across all matching concepts. Earlier concepts win for the same period; later concepts fill gaps. Handles companies that switch XBRL tags between years (e.g. Alphabet revenue).
 - **Coverage matrix** — after a full ingestion run, `print_coverage_matrix()` prints a GREEN/YELLOW/RED matrix showing % of expected annual periods filled per company × concept; flags cells below 70%.
 - **Upsert preserves existing data** — filings upsert uses `COALESCE(filings.field, EXCLUDED.field)` so existing non-null values are never overwritten. Only null fields get filled. To fix bad data: delete the company's rows first, then re-ingest.
-- **Multi-class share structures** — `extract_shares_outstanding` handles companies with multiple share classes (e.g. META Class A+B, GOOGL Class A+B+C). If no single total tag exists, sums per-class shares outstanding automatically.
-- **Stock split adjustments** — `enrich_shares.py` normalizes historical shares outstanding for known stock splits (AMZN 20:1 2022, GOOGL 20:1 2022, TSLA 3:1 2022, AAPL 4:1 2020 + 7:1 2014). Pre-split values are multiplied so the entire time series is comparable.
+- **Share enrichment (3-source cascade)** — `enrich_shares.py` fills NULL `shares_outstanding` in 10-K filings using three sources in priority order: (1) DEI `EntityCommonStockSharesOutstanding` from companyfacts API, (2) us-gaap `CommonStockSharesOutstanding` from companyfacts API (sums multi-class shares by accession, takes most recently filed), (3) 10-K cover page regex via edgartools (final fallback). Only updates NULL rows.
 - **Validation layer** — `validate.py` checks ingested data against 20 ground-truth benchmarks (10 companies × SBC + revenue, 5-10% tolerance) and sanity rules (YoY change limits, SBC/revenue ratio bounds, magnitude floors by market cap tier). `--heal` flag nulls suspect values in the metrics table so the UI shows "—" instead of bad numbers.
 - **Precomputed metrics table** — ratios stored in DB, not computed on every request.
 - **EDGAR rate limit** — SEC allows ~10 req/sec; we sleep 0.5s between companies to be safe.
