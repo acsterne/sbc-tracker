@@ -215,7 +215,7 @@
                 <td class="num">{{ r.buyback_spend_annual | compact }}</td>
                 <td class="num">{{ r.net_income_annual | compact }}</td>
                 <td class="num">{{ r.shares_outstanding_eoy | number }}</td>
-                <td class="num">{% if r.stock_price_eoy %}\${{ "%.2f" | format(r.stock_price_eoy) }}{% else %}—{% endif %}</td>
+                <td class="num">{% if r.stock_price_eoy %}${{ "%.2f" | format(r.stock_price_eoy) }}{% else %}—{% endif %}</td>
                 <td class="num">{{ r.market_cap | compact }}</td>
                 <td class="num
                     {% if r.sbc_pct_market_cap and r.sbc_pct_market_cap > 5 %}sbc-high
