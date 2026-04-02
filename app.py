@@ -173,7 +173,8 @@ def company(ticker):
             m.shares_outstanding_eoy, m.shares_repurchased_annual,
             m.sbc_pct_revenue, m.sbc_pct_ebitda, m.ebitda_annual, m.ebitda_negative,
             m.net_dilution_pct, m.sbc_per_share,
-            m.revenue_growth_yoy, m.unrecognized_sbc_annual
+            m.revenue_growth_yoy, m.unrecognized_sbc_annual,
+            m.stock_price_eoy, m.market_cap, m.sbc_pct_market_cap
         FROM metrics m
         WHERE m.company_id = %s AND m.sbc_annual IS NOT NULL
         ORDER BY m.fiscal_year ASC
@@ -190,6 +191,9 @@ def company(ticker):
     chart_unrec     = [float(r["unrecognized_sbc_annual"] or 0) / 1e6 for r in history]
     chart_shares    = [float(r["shares_outstanding_eoy"] or 0) / 1e6 for r in history]
     chart_bb_shares = [float(r["shares_repurchased_annual"] or 0) / 1e6 for r in history]
+    chart_price     = [float(r["stock_price_eoy"]) if r["stock_price_eoy"] else None for r in history]
+    chart_mcap      = [float(r["market_cap"] or 0) / 1e9 for r in history]
+    chart_sbc_pct_mcap = [float(r["sbc_pct_market_cap"]) if r["sbc_pct_market_cap"] else None for r in history]
 
     cur.close()
     conn.close()
@@ -207,6 +211,9 @@ def company(ticker):
         chart_unrec=chart_unrec,
         chart_shares=chart_shares,
         chart_bb_shares=chart_bb_shares,
+        chart_price=chart_price,
+        chart_mcap=chart_mcap,
+        chart_sbc_pct_mcap=chart_sbc_pct_mcap,
     )
 
 
@@ -272,7 +279,8 @@ def analysis():
             m.fiscal_year,
             m.sbc_annual, m.revenue_annual, m.buyback_spend_annual,
             m.sbc_pct_revenue, m.revenue_growth_yoy,
-            m.shares_outstanding_eoy, m.net_income_annual
+            m.shares_outstanding_eoy, m.net_income_annual,
+            m.market_cap, m.sbc_pct_market_cap, m.stock_price_eoy
         FROM metrics m
         JOIN companies c ON c.id = m.company_id
         WHERE m.sbc_annual IS NOT NULL
@@ -337,6 +345,8 @@ def analysis():
             "net_dilution_burden": ((sbc - bb) / rev * 100) if rev > 0 else 0,
             "buyback_offset": (bb / sbc * 100) if sbc > 0 else 0,
             "sbc_efficiency": (rev / sbc) if sbc > 0 else 0,
+            "market_cap":     float(r["market_cap"] or 0),
+            "sbc_pct_mcap":   float(r["sbc_pct_market_cap"] or 0),
             "cum_dilution":   ((float(d.get("last_shares", 0)) - float(d.get("first_shares", 0)))
                                / float(d["first_shares"]) * 100)
                               if d.get("first_shares") and float(d["first_shares"]) > 0 else None,

@@ -7,7 +7,7 @@ Flask + PostgreSQL app tracking stock-based compensation across public tech comp
 - **Database:** PostgreSQL via psycopg2 (raw SQL, no ORM)
 - **Frontend:** Jinja2 templates, vanilla JS, Chart.js via CDN, no build step
 - **Hosting:** Railway (`railway.toml`, `Procfile`)
-- **Data source:** SEC EDGAR XBRL API (`data.sec.gov/api/xbrl/companyfacts/`), edgartools library for historical ingestion and shares outstanding
+- **Data source:** SEC EDGAR XBRL API (`data.sec.gov/api/xbrl/companyfacts/`), edgartools library for historical ingestion and shares outstanding, Yahoo Finance for stock prices
 
 ## Running locally
 ```bash
@@ -33,6 +33,10 @@ DATABASE_URL=postgresql://... python3 enrich_shares.py
 DATABASE_URL=postgresql://... python3 enrich_shares.py --ticker META
 DATABASE_URL=postgresql://... python3 enrich_shares.py --all  # process all companies, even those with no gaps
 
+# Fetch stock prices from Yahoo Finance and compute market cap metrics
+DATABASE_URL=postgresql://... python3 fetch_prices.py
+DATABASE_URL=postgresql://... python3 fetch_prices.py --ticker META
+
 # validate.py runs standalone for checking data quality after ingestion:
 # Validate ingested data against ground-truth benchmarks + sanity rules
 DATABASE_URL=postgresql://... python3 validate.py
@@ -49,7 +53,7 @@ Master list of tracked companies — ticker, name, CIK (SEC identifier), sector,
 One row per company per period (annual 10-K and quarterly 10-Q). Raw financials: SBC expense, revenue, gross profit, net income, shares outstanding, shares repurchased, buyback spend. Also stores SBC by function (sbc_cogs, sbc_rd, sbc_sm, sbc_ga), unrecognized_sbc (future expense from unvested awards), ebitda (plus operating_income and depreciation_amortization components for auditability), data_source, and confidence. Unique on (company_id, fiscal_year, form_type).
 
 ### `metrics`
-Annual metrics computed from 10-K filings only (10-Q data is YTD cumulative and would double-count if summed). Stores pre-computed ratios: sbc_pct_revenue, sbc_pct_ebitda (replaces sbc_pct_gross_profit), ebitda_negative flag, net_dilution_pct, sbc_per_share, revenue_growth_yoy, unrecognized_sbc_annual. Refreshed by `fetch_sbc.py` after each fetch. Unique on (company_id, fiscal_year).
+Annual metrics computed from 10-K filings only (10-Q data is YTD cumulative and would double-count if summed). Stores pre-computed ratios: sbc_pct_revenue, sbc_pct_ebitda (replaces sbc_pct_gross_profit), ebitda_negative flag, net_dilution_pct, sbc_per_share, revenue_growth_yoy, unrecognized_sbc_annual. Also stores stock_price_eoy, market_cap, sbc_pct_market_cap (populated by `fetch_prices.py`). Refreshed by `fetch_sbc.py` after each fetch. Unique on (company_id, fiscal_year).
 
 ### `company_tags`
 Stores which XBRL tag was dynamically selected per company per concept, how many periods it returned, and whether discovery succeeded or flagged `needs_html_parse`. Written on every ingestion run.
@@ -74,7 +78,7 @@ Stores which XBRL tag was dynamically selected per company per concept, how many
 | `/` | Leaderboard — all companies, latest year, sortable by any metric, filterable by ticker/name |
 | `/company/<ticker>` | Company detail — historical charts (profitability, dilution/ownership) + year-by-year table |
 | `/scatter` | Scatter plot: SBC % Revenue (Y) vs Revenue Growth (X) |
-| `/analysis` | Cross-company analysis — 5 tabbed charts (Paying for Growth, Worst Offenders, Buyback Offset, Cumulative Dilution, SBC Efficiency) with sector/revenue filters |
+| `/analysis` | Cross-company analysis — 5 charts on one scrollable page (Paying for Growth, Worst Offenders, Buyback Offset, Cumulative Dilution, SBC Efficiency) with sector/revenue filters |
 | `/api/debug/coverage` | JSON: per-company data coverage (most recent year, years with SBC data) |
 
 ## Adding companies

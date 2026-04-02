@@ -83,6 +83,16 @@
     <canvas id="efficiencyChart" height="175"></canvas>
 </div>
 
+<!-- Chart 6: SBC % Market Cap -->
+<div class="card" style="margin-bottom:20px;">
+    <div style="font-weight:600;margin-bottom:4px;font-size:13px;">SBC % of Market Cap — Annual Dilution Rate</div>
+    <div style="color:var(--muted);font-size:11px;margin-bottom:12px;">
+        How much of the company is given away to employees each year.
+        Higher = more expensive dilution for shareholders.
+    </div>
+    <canvas id="sbcMcapChart" height="175"></canvas>
+</div>
+
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 <script>
 const RAW = {{ data | safe }};
@@ -285,6 +295,15 @@ hBar('efficiencyChart',
     v => v >= 10 ? '#22c55e' : v >= 5 ? '#eab308' : '#ef4444',
     'Revenue per $1 SBC (x)',
     d => `${d.sbc_efficiency.toFixed(1)}x — $${(d.revenue/1e9).toFixed(0)}B rev / $${(d.sbc/1e9).toFixed(1)}B SBC`
+);
+
+// ── Chart 6: SBC % Market Cap ──────────────────────────────────────────────
+hBar('sbcMcapChart',
+    RAW.filter(d => d.sbc_pct_mcap > 0),
+    'sbc_pct_mcap',
+    v => v > 5 ? '#ef4444' : v > 2 ? '#f97316' : '#22c55e',
+    'SBC % of Market Cap',
+    d => `${d.sbc_pct_mcap.toFixed(2)}% — $${(d.sbc/1e9).toFixed(1)}B SBC / $${(d.market_cap/1e9).toFixed(0)}B MCap`
 );
 </script>
 {% endblock %}
