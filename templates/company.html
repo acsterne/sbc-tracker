@@ -70,12 +70,11 @@
 
 <!-- Chart 1: SBC Profitability Impact (fixed) -->
 <div class="card" style="margin-bottom:20px;">
-    <div style="font-weight:600;margin-bottom:4px;font-size:13px;">SBC Impact on Profitability</div>
+    <div style="font-weight:600;margin-bottom:4px;font-size:13px;">GAAP vs "Adjusted" Earnings</div>
     <div style="color:var(--muted);font-size:12px;margin-bottom:16px;">
-        SBC is a real cost to shareholders even though no cash leaves the company.
-        It dilutes existing shareholders by issuing new shares to employees.
-        The orange bar shows how much profit is consumed by SBC each year.
-        The dashed line shows what earnings would look like if that cost were paid in cash instead.
+        GAAP net income already includes SBC as a real expense. But many companies highlight
+        "adjusted" earnings that add SBC back, flattering profitability.
+        The orange gap shows how much non-GAAP metrics overstate real earnings each year.
     </div>
     <canvas id="profitChart" height="120"></canvas>
 </div>
@@ -244,13 +243,13 @@ new Chart(document.getElementById('profitChart'), {
                 order: 2,
             },
             {
-                label: 'Stock-Based Compensation Expense ($M)',
+                label: 'SBC Added Back ($M)',
                 data: sbcFloating,
                 backgroundColor: 'rgba(249,115,22,0.75)',
                 order: 2,
             },
             {
-                label: 'Earnings if SBC Were Paid in Cash ($M)',
+                label: '"Adjusted" Earnings (ex-SBC) ($M)',
                 data: preSbc,
                 type: 'line',
                 borderColor: '#6b7280',
