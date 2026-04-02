@@ -8,7 +8,7 @@
 
 <div class="page-header">
     <h1>{{ co.name }} <span style="color:var(--muted);font-weight:400;font-size:16px;">({{ co.ticker }})</span></h1>
-    <p>{{ co.sector }} · IPO {{ first_10k_year or co.ipo_year or "—" }} · Historical SBC from SEC EDGAR</p>
+    <p>{{ co.sector }} · IPO {{ co.ipo_year or "—" }} · Historical SBC from SEC EDGAR</p>
 </div>
 
 {% if history %}
