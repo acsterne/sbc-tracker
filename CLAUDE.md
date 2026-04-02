@@ -62,12 +62,13 @@ Stores which XBRL tag was dynamically selected per company per concept, how many
 - **Raw SQL, no ORM** — consistent with other projects.
 - **3-layer EDGAR fetcher** — `fetch_sbc.py` tries three sources in order: (1) XBRL companyfacts API, (2) XBRL instance document from filing index, (3) HTML/XBRL inline parse. Each layer fills gaps left by the previous. XBRL instance parsing uses BeautifulSoup XML parser (more tolerant of malformed XBRL in older filings).
 - **Brute-force historical fetcher** — `fetch_historical.py` uses the `edgartools` library to enumerate and parse every 10-K filing (excludes 10-K/A amendments). Extracts data via `standard_concept` lookups on parsed XBRL statements (income, cash flow, balance sheet), falling back to concept name substring matching. Filters to non-breakdown rows for consolidated totals. Saves checkpoint state to resume after crashes. Prints a coverage report (ticker, year count, earliest/latest year, latest SBC/revenue) at the end.
-- **Dynamic XBRL tag discovery** — before extracting data, `discover_tags()` scores every tag in the companyfacts JSON (annual period count + us-gaap namespace bonus + hardcoded-list bonus + concept-specific bonuses) and picks the best tag per concept. Discovered tag is prepended to the hardcoded fallback list so it wins for same-period conflicts; hardcoded tags fill gaps.
+- **Dynamic XBRL tag discovery** — before extracting data, `discover_tags()` scores every tag in the companyfacts JSON (annual period count + us-gaap namespace bonus + hardcoded-list bonus + concept-specific bonuses) and picks the best tag per concept. Discovered tag is prepended to the hardcoded fallback list so it wins for same-period conflicts; hardcoded tags fill gaps. Revenue concept matching excludes investment-related tags (proceeds, maturities, securities, availableforsale, fairvalue, etc.) that contain "sale" but aren't revenue.
 - **XBRL concept merge** — each metric (SBC, revenue, etc.) iterates a priority-ordered list of XBRL concept names and merges data across all matching concepts. Earlier concepts win for the same period; later concepts fill gaps. Handles companies that switch XBRL tags between years (e.g. Alphabet revenue).
 - **Coverage matrix** — after a full ingestion run, `print_coverage_matrix()` prints a GREEN/YELLOW/RED matrix showing % of expected annual periods filled per company × concept; flags cells below 70%.
 - **Upsert preserves existing data** — filings upsert uses `COALESCE(filings.field, EXCLUDED.field)` so existing non-null values are never overwritten. Only null fields get filled. To fix bad data: delete the company's rows first, then re-ingest.
 - **Share enrichment (3-source cascade)** — `enrich_shares.py` fills NULL `shares_outstanding` in 10-K filings using three sources in priority order: (1) DEI `EntityCommonStockSharesOutstanding` from companyfacts API, (2) us-gaap `CommonStockSharesOutstanding` from companyfacts API (sums multi-class shares by accession, takes most recently filed), (3) 10-K cover page regex via edgartools (final fallback). Only updates NULL rows.
 - **Validation layer** — `validate.py` checks ingested data against 20 ground-truth benchmarks (10 companies × SBC + revenue, 5-10% tolerance) and sanity rules (YoY change limits, SBC/revenue ratio bounds, magnitude floors by market cap tier). `--heal` flag nulls suspect values in the metrics table so the UI shows "—" instead of bad numbers.
+- **Stock price enrichment** — `fetch_prices.py` fetches historical year-end stock prices from Yahoo Finance (yfinance). Uses EDGAR companyfacts `end` dates to determine each company's fiscal year end, then looks up the closing price on or before that date. Computes market_cap (shares × price) and sbc_pct_market_cap. Stores in the metrics table.
 - **Precomputed metrics table** — ratios stored in DB, not computed on every request.
 - **EDGAR rate limit** — SEC allows ~10 req/sec; we sleep 0.5s between companies to be safe.
 - **EDGAR User-Agent required** — SEC blocks generic agents; use a descriptive User-Agent with contact email.
@@ -76,9 +77,9 @@ Stores which XBRL tag was dynamically selected per company per concept, how many
 | Path | Purpose |
 |---|---|
 | `/` | Leaderboard — all companies, latest year, sortable by any metric, filterable by ticker/name |
-| `/company/<ticker>` | Company detail — historical charts (profitability, dilution/ownership) + year-by-year table |
+| `/company/<ticker>` | Company detail — dilution callout, summary cards, historical charts (GAAP vs adjusted earnings, dilution/ownership, SBC % revenue vs market cap, market cap vs cumulative SBC) + year-by-year table |
 | `/scatter` | Scatter plot: SBC % Revenue (Y) vs Revenue Growth (X) |
-| `/analysis` | Cross-company analysis — 5 charts on one scrollable page (Paying for Growth, Worst Offenders, Buyback Offset, Cumulative Dilution, SBC Efficiency) with sector/revenue filters |
+| `/analysis` | Cross-company analysis — 6 charts on one scrollable page (Paying for Growth, Worst Offenders, Buyback Offset, Cumulative Dilution, SBC Efficiency, SBC % Market Cap) with sector/revenue filters |
 | `/api/debug/coverage` | JSON: per-company data coverage (most recent year, years with SBC data) |
 
 ## Adding companies
@@ -88,3 +89,5 @@ Edit `companies.py`. Find CIK at: https://www.sec.gov/cgi-bin/browse-edgar?actio
 - Keep it simple. Prefer direct solutions — raw SQL over abstraction.
 - Don't guess CIK values — look them up on EDGAR.
 - EDGAR XBRL data is available from ~2009 onward (XBRL mandate for large filers).
+- Some small/SPAC companies (e.g. SOUN) have unreliable XBRL tagging — standard revenue tags may capture only a fraction of actual revenue. These require manual data correction verified against earnings releases.
+- **Upsert COALESCE caveat** — the "never overwrite non-null" pattern means bad data from a wrong XBRL tag is sticky. Fixing requires explicit UPDATE, not re-running the fetcher.
