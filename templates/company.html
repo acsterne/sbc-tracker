@@ -14,15 +14,46 @@
 {% if history %}
 {% set latest = history[-1] %}
 
-<!-- Latest year summary cards -->
-<div class="metric-row" style="margin-bottom:32px;">
+<!-- Row 1: Financial metrics -->
+<div style="margin-bottom:8px;color:var(--muted);font-size:11px;font-weight:600;letter-spacing:0.05em;text-transform:uppercase;">Financials ({{ latest.fiscal_year }})</div>
+<div class="metric-row" style="margin-bottom:16px;">
     <div class="card">
-        <div class="card-label">SBC ({{ latest.fiscal_year }})</div>
-        <div class="card-value">{{ latest.sbc_annual | compact }}</div>
+        <div class="card-label">Revenue</div>
+        <div class="card-value">{{ latest.revenue_annual | compact }}</div>
     </div>
     <div class="card">
-        <div class="card-label">Revenue ({{ latest.fiscal_year }})</div>
-        <div class="card-value">{{ latest.revenue_annual | compact }}</div>
+        <div class="card-label">Revenue Growth YoY</div>
+        <div class="card-value {% if latest.revenue_growth_yoy and latest.revenue_growth_yoy > 25 %}growth-high{% endif %}">
+            {{ latest.revenue_growth_yoy | pct }}
+        </div>
+    </div>
+    <div class="card">
+        <div class="card-label">EBITDA</div>
+        <div class="card-value">
+            {% if latest.ebitda_negative %}<span style="color:var(--muted)">negative</span>
+            {% else %}{{ latest.ebitda_annual | compact }}{% endif %}
+        </div>
+    </div>
+    <div class="card">
+        <div class="card-label">Net Income</div>
+        <div class="card-value">{{ latest.net_income_annual | compact }}</div>
+    </div>
+    <div class="card">
+        <div class="card-label">Stock Price</div>
+        <div class="card-value">{% if latest.stock_price_eoy %}${{ "%.2f" | format(latest.stock_price_eoy) }}{% else %}—{% endif %}</div>
+    </div>
+    <div class="card">
+        <div class="card-label">Market Cap</div>
+        <div class="card-value">{{ latest.market_cap | compact }}</div>
+    </div>
+</div>
+
+<!-- Row 2: SBC metrics -->
+<div style="margin-bottom:8px;color:var(--muted);font-size:11px;font-weight:600;letter-spacing:0.05em;text-transform:uppercase;">Stock-Based Compensation ({{ latest.fiscal_year }})</div>
+<div class="metric-row" style="margin-bottom:32px;">
+    <div class="card">
+        <div class="card-label">SBC Expense</div>
+        <div class="card-value">{{ latest.sbc_annual | compact }}</div>
     </div>
     <div class="card">
         <div class="card-label">SBC % of Revenue</div>
@@ -45,16 +76,6 @@
         </div>
     </div>
     <div class="card">
-        <div class="card-label">Revenue Growth YoY</div>
-        <div class="card-value {% if latest.revenue_growth_yoy and latest.revenue_growth_yoy > 25 %}growth-high{% endif %}">
-            {{ latest.revenue_growth_yoy | pct }}
-        </div>
-    </div>
-    <div class="card">
-        <div class="card-label">Market Cap ({{ latest.fiscal_year }})</div>
-        <div class="card-value">{{ latest.market_cap | compact }}</div>
-    </div>
-    <div class="card">
         <div class="card-label">SBC % of Market Cap</div>
         <div class="card-value
             {% if latest.sbc_pct_market_cap and latest.sbc_pct_market_cap > 5 %}sbc-high
@@ -62,6 +83,14 @@
             {% else %}sbc-low{% endif %}">
             {{ latest.sbc_pct_market_cap | pct }}
         </div>
+    </div>
+    <div class="card">
+        <div class="card-label">Buybacks</div>
+        <div class="card-value">{{ latest.buyback_spend_annual | compact }}</div>
+    </div>
+    <div class="card">
+        <div class="card-label">Unrecognized SBC</div>
+        <div class="card-value" style="color:var(--orange)">{{ latest.unrecognized_sbc_annual | compact }}</div>
     </div>
 </div>
 
