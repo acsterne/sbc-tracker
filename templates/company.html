@@ -463,18 +463,35 @@ const ownershipIdx = years.map((_, i) =>
     sharesRaw[i] > 0 ? +(baseShares / sharesRaw[i] * 100).toFixed(1) : null
 );
 
-// Per-year gross SBC dilution and buyback offset (both as % of prior-year shares)
+// Per-year share change breakdown (as % of prior-year shares)
+// When we have shares_repurchased: gross dilution = net change + buyback shares
+// When we don't: estimate buyback shares from buyback_spend / stock_price
 const grossSbcPct = years.map((_, i) => {
     if (i === 0 || sharesRaw[i] <= 0 || sharesRaw[i - 1] <= 0) return null;
     const netChg  = (sharesRaw[i] - sharesRaw[i - 1]) / sharesRaw[i - 1] * 100;
-    const bbOff   = bbSharesRaw[i] > 0 ? bbSharesRaw[i] / sharesRaw[i - 1] * 100 : 0;
-    const gross   = netChg + bbOff;
+    let bbOff = 0;
+    if (bbSharesRaw[i] > 0) {
+        bbOff = bbSharesRaw[i] / sharesRaw[i - 1] * 100;
+    } else if (bb[i] > 0 && price[i]) {
+        // Estimate repurchased shares from buyback dollars / price
+        const estShares = (bb[i] * 1e6) / price[i] / 1e6; // bb in $M, price in $, shares in M
+        bbOff = estShares / sharesRaw[i - 1] * 100;
+    }
+    const gross = netChg + bbOff;
     return gross > 0 ? +gross.toFixed(2) : 0;
 });
 
 const bbPct = years.map((_, i) => {
-    if (i === 0 || sharesRaw[i - 1] <= 0 || bbSharesRaw[i] <= 0) return null;
-    return +(bbSharesRaw[i] / sharesRaw[i - 1] * 100).toFixed(2);
+    if (i === 0 || sharesRaw[i - 1] <= 0) return null;
+    if (bbSharesRaw[i] > 0) {
+        return +(bbSharesRaw[i] / sharesRaw[i - 1] * 100).toFixed(2);
+    }
+    // Estimate from buyback spend / stock price
+    if (bb[i] > 0 && price[i]) {
+        const estShares = (bb[i] * 1e6) / price[i] / 1e6;
+        return +(estShares / sharesRaw[i - 1] * 100).toFixed(2);
+    }
+    return null;
 });
 
 // Left panel: ownership area chart
