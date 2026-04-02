@@ -72,9 +72,9 @@
 <table>
     <thead>
         <tr>
-            {% macro sort_header(col, label) %}
+            {% macro sort_header(col, label, tip='') %}
                 {% set next_order = 'asc' if (sort == col and order == 'desc') else 'desc' %}
-                <th>
+                <th{% if tip %} class="tip" title="{{ tip }}"{% endif %}>
                     <a href="?sort={{ col }}&order={{ next_order }}&year={{ year }}&sector={{ sector }}"
                        class="{% if sort == col %}sort-{{ order }}{% endif %}">
                         {{ label }}
@@ -85,13 +85,13 @@
             {{ sort_header('name', 'Company') }}
             {{ sort_header('sector', 'Sector') }}
             {{ sort_header('fiscal_year', 'Year') }}
-            {{ sort_header('sbc_annual', 'SBC ($)') }}
-            {{ sort_header('revenue_annual', 'Revenue ($)') }}
-            {{ sort_header('sbc_pct_revenue', 'SBC % Rev') }}
-            {{ sort_header('sbc_pct_ebitda', 'SBC % EBITDA') }}
-            {{ sort_header('revenue_growth_yoy', 'Rev Growth') }}
-            {{ sort_header('buyback_spend_annual', 'Buybacks ($)') }}
-            {{ sort_header('net_dilution_pct', 'Buyback % Shares') }}
+            {{ sort_header('sbc_annual', 'SBC ($)', 'Stock-based compensation expense — GAAP cost of equity grants to employees') }}
+            {{ sort_header('revenue_annual', 'Revenue ($)', 'Total annual revenue from 10-K') }}
+            {{ sort_header('sbc_pct_revenue', 'SBC % Rev', 'SBC as a percentage of revenue — how aggressively the company uses stock compensation') }}
+            {{ sort_header('sbc_pct_ebitda', 'SBC % EBITDA', 'SBC as % of EBITDA. >100% means SBC exceeds operating cash earnings') }}
+            {{ sort_header('revenue_growth_yoy', 'Rev Growth', 'Year-over-year revenue growth rate') }}
+            {{ sort_header('buyback_spend_annual', 'Buybacks ($)', 'Cash spent repurchasing shares — offsets dilution from SBC') }}
+            {{ sort_header('net_dilution_pct', 'Buyback % Shares', 'Shares repurchased as % of total shares outstanding') }}
         </tr>
     </thead>
     <tbody>
