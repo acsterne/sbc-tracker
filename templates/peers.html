@@ -175,11 +175,23 @@ new Chart(document.getElementById('peerChart'), {
         }
     },
     plugins: [{
-        // Bold the selected ticker label on the x-axis
         afterDraw(chart) {
+            const ctx = chart.ctx;
+            const meta = chart.getDatasetMeta(0);
+            ctx.save();
+            ctx.font = 'bold 11px -apple-system, sans-serif';
+            ctx.fillStyle = '#374151';
+            ctx.textAlign = 'center';
+            meta.data.forEach((bar, i) => {
+                const val = peers[i].val;
+                const label = metricSuffix === '%' ? val.toFixed(1) + '%' : val.toFixed(1);
+                ctx.fillText(label, bar.x, bar.y - 6);
+            });
+            ctx.restore();
+
+            // Highlight selected ticker
             if (!selectedTicker) return;
             const xAxis = chart.scales.x;
-            const ctx = chart.ctx;
             const idx = peers.findIndex(p => p.ticker === selectedTicker);
             if (idx < 0) return;
             const tick = xAxis.getLabelForValue(idx);
