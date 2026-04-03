@@ -1,0 +1,228 @@
+{% extends "base.html" %}
+{% block title %}Peer Comparison — SBC Tracker{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1>Peer Comparison</h1>
+    <p>See how a company stacks up against its peers on any metric.</p>
+</div>
+
+<div class="filter-bar">
+    <form method="get" style="display:flex;gap:12px;flex-wrap:wrap;align-items:center;">
+        <select name="ticker" onchange="this.form.submit()">
+            <option value="">Select company</option>
+            {% for t in available_tickers %}
+            <option value="{{ t }}" {% if ticker == t %}selected{% endif %}>{{ t }}</option>
+            {% endfor %}
+        </select>
+        <select name="metric" onchange="this.form.submit()">
+            {% for k, label in metric_defs.items() %}
+            <option value="{{ k }}" {% if metric == k %}selected{% endif %}>{{ label }}</option>
+            {% endfor %}
+        </select>
+        <select name="year" onchange="this.form.submit()">
+            {% for y in available_years %}
+            <option value="{{ y }}" {% if year|string == y|string %}selected{% endif %}>{{ y }}</option>
+            {% endfor %}
+        </select>
+        <select name="group" onchange="this.form.submit()">
+            <option value="sector" {% if group == 'sector' %}selected{% endif %}>Same Sector</option>
+            <option value="all" {% if group == 'all' %}selected{% endif %}>All Companies</option>
+        </select>
+        {% if ticker %}
+        <a href="/peers" style="color:var(--muted);font-size:12px;">Clear</a>
+        {% endif %}
+    </form>
+</div>
+
+{% if peer_count > 0 %}
+<!-- Summary cards -->
+<div class="metric-row">
+    <div class="card">
+        <div class="card-label">Peer Group</div>
+        <div class="card-value" style="font-size:20px;">{{ selected_sector or 'All Companies' }}</div>
+        <div style="color:var(--muted);font-size:12px;margin-top:4px;">{{ peer_count }} companies</div>
+    </div>
+    {% if selected_val is not none %}
+    <div class="card">
+        <div class="card-label">{{ ticker }}</div>
+        <div class="card-value">{{ "%.1f"|format(selected_val) }}{{ metric_suffix }}</div>
+    </div>
+    {% endif %}
+    <div class="card">
+        <div class="card-label">Peer Average</div>
+        <div class="card-value">{{ "%.1f"|format(peer_avg) }}{{ metric_suffix }}</div>
+    </div>
+    <div class="card">
+        <div class="card-label">Peer Median</div>
+        <div class="card-value">{{ "%.1f"|format(peer_median) }}{{ metric_suffix }}</div>
+    </div>
+    {% if selected_val is not none %}
+    <div class="card">
+        <div class="card-label">Percentile</div>
+        <div class="card-value" id="percentileCard">—</div>
+    </div>
+    {% endif %}
+</div>
+
+<!-- Chart -->
+<div class="card" style="margin-bottom:24px;">
+    <div style="font-weight:600;margin-bottom:4px;font-size:13px;">{{ metric_label }} — {{ year }}</div>
+    <div style="color:var(--muted);font-size:11px;margin-bottom:12px;">
+        Bars sorted by value. {% if ticker %}{{ ticker }} highlighted in blue.{% endif %} Dashed line = peer average.
+    </div>
+    <canvas id="peerChart" height="120"></canvas>
+</div>
+
+<!-- Data table -->
+<div class="card">
+    <div style="font-weight:600;margin-bottom:16px;font-size:13px;">{{ year }} Peer Data</div>
+    <div class="table-wrap">
+    <table>
+        <thead>
+            <tr>
+                <th style="width:40px;">#</th>
+                <th>Ticker</th>
+                <th>Company</th>
+                <th>Sector</th>
+                <th class="num">{{ metric_label }}</th>
+            </tr>
+        </thead>
+        <tbody id="peerTable"></tbody>
+    </table>
+    </div>
+</div>
+{% else %}
+<div class="card" style="text-align:center;color:var(--muted);padding:48px;">
+    No data available for the selected filters.
+</div>
+{% endif %}
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-annotation@3.0.1/dist/chartjs-plugin-annotation.min.js"></script>
+<script>
+const peers = {{ peers_data | safe }};
+const selectedTicker = {{ ticker | tojson }};
+const metricLabel = {{ metric_label | tojson }};
+const metricSuffix = {{ metric_suffix | tojson }};
+const peerAvg = {{ peer_avg }};
+const peerMedian = {{ peer_median }};
+
+// Sort descending
+peers.sort((a, b) => b.val - a.val);
+
+// Compute percentile for selected company
+if (selectedTicker) {
+    const rank = peers.filter(p => p.val <= peers.find(q => q.ticker === selectedTicker)?.val).length;
+    const pctile = Math.round((rank / peers.length) * 100);
+    const el = document.getElementById('percentileCard');
+    if (el) el.textContent = pctile + 'th';
+}
+
+// Colors
+const barColors = peers.map(p =>
+    p.ticker === selectedTicker ? '#4f46e5' : '#d1d5db'
+);
+const borderColors = peers.map(p =>
+    p.ticker === selectedTicker ? '#4338ca' : '#b0b5bf'
+);
+
+new Chart(document.getElementById('peerChart'), {
+    type: 'bar',
+    data: {
+        labels: peers.map(p => p.ticker),
+        datasets: [{
+            label: metricLabel,
+            data: peers.map(p => p.val),
+            backgroundColor: barColors,
+            borderColor: borderColors,
+            borderWidth: 1,
+            borderRadius: 3,
+        }]
+    },
+    options: {
+        responsive: true,
+        plugins: {
+            legend: { display: false },
+            tooltip: {
+                callbacks: {
+                    title: ctx => {
+                        const p = peers[ctx[0].dataIndex];
+                        return `${p.ticker} (${p.name})`;
+                    },
+                    label: ctx => `${metricLabel}: ${ctx.parsed.y.toFixed(1)}${metricSuffix}`
+                }
+            },
+            annotation: {
+                annotations: {
+                    avgLine: {
+                        type: 'line',
+                        yMin: peerAvg,
+                        yMax: peerAvg,
+                        borderColor: '#ef4444',
+                        borderWidth: 2,
+                        borderDash: [6, 4],
+                        label: {
+                            display: true,
+                            content: `Avg: ${peerAvg.toFixed(1)}${metricSuffix}`,
+                            position: 'start',
+                            backgroundColor: '#ef444422',
+                            color: '#ef4444',
+                            font: { size: 11, weight: 'bold' },
+                            padding: 4,
+                        }
+                    },
+                    medianLine: {
+                        type: 'line',
+                        yMin: peerMedian,
+                        yMax: peerMedian,
+                        borderColor: '#6b7280',
+                        borderWidth: 1.5,
+                        borderDash: [4, 4],
+                        label: {
+                            display: true,
+                            content: `Median: ${peerMedian.toFixed(1)}${metricSuffix}`,
+                            position: 'end',
+                            backgroundColor: '#6b728022',
+                            color: '#6b7280',
+                            font: { size: 11 },
+                            padding: 4,
+                        }
+                    }
+                }
+            }
+        },
+        scales: {
+            x: {
+                ticks: {
+                    color: '#6b7280',
+                    font: { size: 11, weight: ctx => peers[ctx.index]?.ticker === selectedTicker ? 'bold' : 'normal' }
+                },
+                grid: { display: false },
+            },
+            y: {
+                ticks: { color: '#6b7280', callback: v => v + metricSuffix },
+                grid: { color: '#e2e6ed' },
+                title: { display: true, text: metricLabel, color: '#6b7280' },
+            }
+        }
+    }
+});
+
+// Build table
+const tbody = document.getElementById('peerTable');
+peers.forEach((p, i) => {
+    const isSelected = p.ticker === selectedTicker;
+    const row = document.createElement('tr');
+    if (isSelected) row.style.background = 'rgba(79,70,229,0.06)';
+    row.innerHTML = `
+        <td style="color:var(--muted);">${i + 1}</td>
+        <td><a href="/company/${p.ticker}" style="font-weight:${isSelected ? '700' : '600'};">${p.ticker}</a></td>
+        <td>${p.name}</td>
+        <td><span class="badge badge-sector">${p.sector}</span></td>
+        <td class="num" style="${isSelected ? 'font-weight:700;' : ''}">${p.val.toFixed(1)}${metricSuffix}</td>
+    `;
+    tbody.appendChild(row);
+});
+</script>
+{% endblock %}

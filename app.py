@@ -405,5 +405,108 @@ def scatter():
     )
 
 
+@app.route("/peers")
+def peers():
+    """Peer comparison — histogram of a chosen metric with peer-group average."""
+    ticker  = request.args.get("ticker", "")
+    metric  = request.args.get("metric", "sbc_pct_revenue")
+    year    = request.args.get("year", "")
+    group   = request.args.get("group", "sector")  # sector or all
+
+    METRIC_DEFS = {
+        "sbc_pct_revenue":    {"label": "SBC % Revenue",       "col": "m.sbc_pct_revenue",       "fmt": "pct",     "suffix": "%"},
+        "sbc_pct_market_cap": {"label": "SBC % Market Cap",    "col": "m.sbc_pct_market_cap",    "fmt": "pct",     "suffix": "%"},
+        "net_dilution_pct":   {"label": "Net Dilution %",      "col": "m.net_dilution_pct",      "fmt": "pct",     "suffix": "%"},
+        "revenue_growth_yoy": {"label": "Revenue Growth YoY",  "col": "m.revenue_growth_yoy",    "fmt": "pct",     "suffix": "%"},
+        "sbc_per_share":      {"label": "SBC per Share",       "col": "m.sbc_per_share",         "fmt": "dollar",  "suffix": ""},
+        "sbc_pct_ebitda":     {"label": "SBC % EBITDA",        "col": "m.sbc_pct_ebitda",        "fmt": "pct",     "suffix": "%"},
+    }
+
+    if metric not in METRIC_DEFS:
+        metric = "sbc_pct_revenue"
+    mdef = METRIC_DEFS[metric]
+
+    conn = get_db()
+    cur = conn.cursor()
+
+    # Available tickers
+    cur.execute("SELECT ticker FROM companies ORDER BY ticker")
+    available_tickers = [r["ticker"] for r in cur.fetchall()]
+
+    # Available years
+    cur.execute("SELECT DISTINCT fiscal_year FROM metrics ORDER BY fiscal_year DESC")
+    available_years = [r["fiscal_year"] for r in cur.fetchall()]
+
+    if not year and available_years:
+        year = str(available_years[0])
+
+    # Determine peer group: if grouping by sector and a ticker is selected, filter to same sector
+    sector_filter = ""
+    params = {"year": int(year)} if year else {}
+
+    selected_sector = None
+    if ticker and group == "sector":
+        cur.execute("SELECT sector FROM companies WHERE ticker = %s", (ticker,))
+        row = cur.fetchone()
+        if row:
+            selected_sector = row["sector"]
+            sector_filter = "AND c.sector = %(sector)s"
+            params["sector"] = selected_sector
+
+    # Fetch metric values for all peers
+    cur.execute(f"""
+        SELECT c.ticker, c.name, c.sector, m.fiscal_year,
+               {mdef['col']} AS metric_val
+        FROM metrics m
+        JOIN companies c ON c.id = m.company_id
+        WHERE m.fiscal_year = %(year)s
+          AND {mdef['col']} IS NOT NULL
+          {sector_filter}
+        ORDER BY {mdef['col']} DESC
+    """, params)
+    rows = cur.fetchall()
+
+    cur.close()
+    conn.close()
+
+    peers_data = []
+    selected_val = None
+    for r in rows:
+        val = float(r["metric_val"])
+        peers_data.append({
+            "ticker": r["ticker"],
+            "name":   r["name"],
+            "sector": r["sector"],
+            "val":    val,
+        })
+        if r["ticker"] == ticker:
+            selected_val = val
+
+    # Compute peer average and median
+    vals = [p["val"] for p in peers_data]
+    peer_avg = sum(vals) / len(vals) if vals else 0
+    sorted_vals = sorted(vals)
+    peer_median = sorted_vals[len(sorted_vals) // 2] if sorted_vals else 0
+
+    import json as _json
+    return render_template("peers.html",
+        peers_data=_json.dumps(peers_data),
+        ticker=ticker,
+        metric=metric,
+        metric_label=mdef["label"],
+        metric_suffix=mdef["suffix"],
+        year=year,
+        group=group,
+        selected_sector=selected_sector,
+        selected_val=selected_val,
+        peer_avg=peer_avg,
+        peer_median=peer_median,
+        peer_count=len(peers_data),
+        available_tickers=available_tickers,
+        available_years=available_years,
+        metric_defs={k: v["label"] for k, v in METRIC_DEFS.items()},
+    )
+
+
 if __name__ == "__main__":
     app.run(debug=True, port=5001)
