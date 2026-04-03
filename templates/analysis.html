@@ -119,6 +119,27 @@ const sortedGrowth = inRange.map(d => d.growth).sort((a,b) => a-b);
 const medPct = sortedPct[Math.floor(sortedPct.length/2)] || 10;
 const medGr  = sortedGrowth[Math.floor(sortedGrowth.length/2)] || 15;
 
+// R² — linear regression of SBC % Rev vs Growth
+function computeR2(data) {
+    const n = data.length;
+    if (n < 3) return { r2: null, slope: 0, intercept: 0 };
+    const xs = data.map(d => d.sbc_pct_rev);
+    const ys = data.map(d => d.growth);
+    const mx = xs.reduce((a,b) => a+b, 0) / n;
+    const my = ys.reduce((a,b) => a+b, 0) / n;
+    let ssxy = 0, ssxx = 0, ssyy = 0;
+    for (let i = 0; i < n; i++) {
+        ssxy += (xs[i] - mx) * (ys[i] - my);
+        ssxx += (xs[i] - mx) ** 2;
+        ssyy += (ys[i] - my) ** 2;
+    }
+    const slope = ssxx > 0 ? ssxy / ssxx : 0;
+    const intercept = my - slope * mx;
+    const r2 = (ssxx > 0 && ssyy > 0) ? (ssxy ** 2) / (ssxx * ssyy) : 0;
+    return { r2: +r2.toFixed(3), slope, intercept };
+}
+const { r2, slope, intercept } = computeR2(inRange);
+
 // Bubble size: scale SBC dollars to radius 8–40px
 const sbcVals = scatterData.map(d => d.sbc).filter(v => v > 0);
 const minSbc = Math.min(...sbcVals);
@@ -135,6 +156,19 @@ new Chart(document.getElementById('scatterChart'), {
     type: 'bubble',
     data: {
         datasets: [
+            // Trend line
+            {
+                label: `Trend (R²=${r2 !== null ? r2.toFixed(2) : '—'})`,
+                type: 'line',
+                data: [{x: 0, y: intercept}, {x: maxPct, y: slope * maxPct + intercept}],
+                borderColor: '#9ca3af',
+                borderDash: [6, 4],
+                borderWidth: 1.5,
+                pointRadius: 0,
+                fill: false,
+                order: 0,
+            },
+            // Bubbles
             ...scatterData.filter(d => d.sbc_pct_rev <= maxPct + 5 && d.growth <= maxGrowth + 10).map(d => ({
             label: d.ticker,
             data: [{
@@ -153,7 +187,7 @@ new Chart(document.getElementById('scatterChart'), {
         plugins: {
             legend: { display: false },
             tooltip: {
-                filter: () => true,
+                filter: ctx => ctx.datasetIndex > 0,  // skip trend line
                 callbacks: {
                     title: ctx => {
                         const ds = ctx[0].dataset;
@@ -218,11 +252,17 @@ new Chart(document.getElementById('scatterChart'), {
             ctx.fillText('Expensive & Fast', xMid + 8, yAxis.top + 16);
             ctx.fillText('Cheap & Slow', xAxis.left + 8, yAxis.bottom - 8);
             ctx.fillText('Expensive & Slow', xMid + 8, yAxis.bottom - 8);
-            // Ticker labels — only on large bubbles
+            // R² annotation
+            ctx.font = 'bold 12px -apple-system, sans-serif';
+            ctx.fillStyle = '#6b7280';
+            ctx.textAlign = 'right';
+            ctx.fillText(`R² = ${r2 !== null ? r2.toFixed(2) : '—'}`, xAxis.right - 8, yAxis.top + 16);
+            // Ticker labels — only on large bubbles (skip trend line at index 0)
             ctx.font = 'bold 10px -apple-system, sans-serif';
             ctx.fillStyle = '#1f2937';
             ctx.textAlign = 'center';
             chart.data.datasets.forEach((ds, i) => {
+                if (i === 0) return; // skip trend line
                 const meta = chart.getDatasetMeta(i);
                 const pt = meta.data[0];
                 if (pt && pt.options.radius >= LABEL_MIN_R) {
