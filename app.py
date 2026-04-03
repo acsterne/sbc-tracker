@@ -405,5 +405,74 @@ def scatter():
     )
 
 
+@app.route("/peers")
+def peers():
+    """Peer comparison — one chart, toggle metric / year / peer group."""
+    metric  = request.args.get("metric", "sbc_pct_revenue")
+    year    = request.args.get("year", "")
+    group   = request.args.get("group", "all")  # all or a sector name
+    ticker  = request.args.get("ticker", "")     # optional highlight
+
+    METRIC_DEFS = {
+        "sbc_pct_revenue":    {"label": "SBC % Revenue",      "col": "m.sbc_pct_revenue",    "suffix": "%"},
+        "sbc_pct_market_cap": {"label": "SBC % Market Cap",   "col": "m.sbc_pct_market_cap", "suffix": "%"},
+        "sbc_pct_ebitda":     {"label": "SBC % EBITDA",       "col": "m.sbc_pct_ebitda",     "suffix": "%"},
+        "net_dilution_pct":   {"label": "Net Dilution %",     "col": "m.net_dilution_pct",   "suffix": "%"},
+        "revenue_growth_yoy": {"label": "Revenue Growth YoY", "col": "m.revenue_growth_yoy", "suffix": "%"},
+        "sbc_per_share":      {"label": "SBC per Share ($)",  "col": "m.sbc_per_share",      "suffix": ""},
+    }
+    if metric not in METRIC_DEFS:
+        metric = "sbc_pct_revenue"
+    mdef = METRIC_DEFS[metric]
+
+    conn = get_db()
+    cur = conn.cursor()
+
+    cur.execute("SELECT DISTINCT sector FROM companies ORDER BY sector")
+    available_sectors = [r["sector"] for r in cur.fetchall()]
+
+    cur.execute("SELECT DISTINCT fiscal_year FROM metrics ORDER BY fiscal_year DESC")
+    available_years = [r["fiscal_year"] for r in cur.fetchall()]
+    if not year and available_years:
+        year = str(available_years[0])
+
+    sector_filter = ""
+    params = {"year": int(year)} if year else {}
+    if group and group != "all":
+        sector_filter = "AND c.sector = %(sector)s"
+        params["sector"] = group
+
+    cur.execute(f"""
+        SELECT c.ticker, c.name, c.sector,
+               {mdef['col']} AS metric_val
+        FROM metrics m
+        JOIN companies c ON c.id = m.company_id
+        WHERE m.fiscal_year = %(year)s
+          AND {mdef['col']} IS NOT NULL
+          {sector_filter}
+        ORDER BY {mdef['col']} DESC
+    """, params)
+    rows = cur.fetchall()
+    cur.close()
+    conn.close()
+
+    peers_data = [{"ticker": r["ticker"], "name": r["name"], "sector": r["sector"],
+                    "val": float(r["metric_val"])} for r in rows]
+    vals = [p["val"] for p in peers_data]
+    peer_avg = sum(vals) / len(vals) if vals else 0
+    sorted_vals = sorted(vals)
+    peer_median = sorted_vals[len(sorted_vals) // 2] if sorted_vals else 0
+
+    import json as _json
+    return render_template("peers.html",
+        peers_data=_json.dumps(peers_data),
+        ticker=ticker, metric=metric, year=year, group=group,
+        metric_label=mdef["label"], metric_suffix=mdef["suffix"],
+        peer_avg=peer_avg, peer_median=peer_median, peer_count=len(peers_data),
+        available_sectors=available_sectors, available_years=available_years,
+        metric_defs={k: v["label"] for k, v in METRIC_DEFS.items()},
+    )
+
+
 if __name__ == "__main__":
     app.run(debug=True, port=5001)

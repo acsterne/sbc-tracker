@@ -1,0 +1,201 @@
+{% extends "base.html" %}
+{% block title %}Peer Comparison — SBC Tracker{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1>Peer Comparison</h1>
+    <p>Compare companies on any metric. Select a company to highlight it against the group.</p>
+</div>
+
+<div class="filter-bar">
+    <form method="get" style="display:flex;gap:12px;flex-wrap:wrap;align-items:center;">
+        <select name="metric" onchange="this.form.submit()">
+            {% for k, label in metric_defs.items() %}
+            <option value="{{ k }}" {% if metric == k %}selected{% endif %}>{{ label }}</option>
+            {% endfor %}
+        </select>
+        <select name="year" onchange="this.form.submit()">
+            {% for y in available_years %}
+            <option value="{{ y }}" {% if year|string == y|string %}selected{% endif %}>{{ y }}</option>
+            {% endfor %}
+        </select>
+        <select name="group" onchange="this.form.submit()">
+            <option value="all" {% if group == 'all' %}selected{% endif %}>All Companies</option>
+            {% for s in available_sectors %}
+            <option value="{{ s }}" {% if group == s %}selected{% endif %}>{{ s }}</option>
+            {% endfor %}
+        </select>
+        <select name="ticker" onchange="this.form.submit()">
+            <option value="">Highlight...</option>
+            {% for p in peers_data | safe %}{% endfor %}
+        </select>
+        {% if ticker or group != 'all' %}
+        <a href="/peers?metric={{ metric }}&year={{ year }}" style="color:var(--muted);font-size:12px;">Clear</a>
+        {% endif %}
+    </form>
+</div>
+
+{% if peer_count > 0 %}
+<div class="card">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+        <div>
+            <span style="font-weight:600;font-size:13px;">{{ metric_label }}</span>
+            <span style="color:var(--muted);font-size:12px;margin-left:8px;">{{ year }} &middot; {{ peer_count }} companies</span>
+        </div>
+        <div style="font-size:12px;color:var(--muted);">
+            Avg: <strong style="color:var(--text);">{{ "%.1f"|format(peer_avg) }}{{ metric_suffix }}</strong>
+            &nbsp;&middot;&nbsp;
+            Median: <strong style="color:var(--text);">{{ "%.1f"|format(peer_median) }}{{ metric_suffix }}</strong>
+        </div>
+    </div>
+    <canvas id="peerChart" height="140"></canvas>
+</div>
+{% else %}
+<div class="card" style="text-align:center;color:var(--muted);padding:48px;">
+    No data available for the selected filters.
+</div>
+{% endif %}
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-annotation@3.0.1/dist/chartjs-plugin-annotation.min.js"></script>
+<script>
+const peers = {{ peers_data | safe }};
+const selectedTicker = {{ ticker | tojson }};
+const metricLabel = {{ metric_label | tojson }};
+const metricSuffix = {{ metric_suffix | tojson }};
+const peerAvg = {{ peer_avg }};
+const peerMedian = {{ peer_median }};
+
+// Sort descending
+peers.sort((a, b) => b.val - a.val);
+
+// Populate the ticker highlight dropdown from JS (avoids double-parsing in Jinja)
+const tickerSelect = document.querySelector('select[name="ticker"]');
+peers.forEach(p => {
+    const opt = document.createElement('option');
+    opt.value = p.ticker;
+    opt.textContent = p.ticker;
+    if (p.ticker === selectedTicker) opt.selected = true;
+    tickerSelect.appendChild(opt);
+});
+
+// Sector colors
+const sectorColors = {
+    'Mega Cap':          '#6366f1',
+    'SaaS':              '#22c55e',
+    'Security':          '#f97316',
+    'Infrastructure':    '#eab308',
+    'AI / Neo-Cloud':    '#ec4899',
+    'Social / Consumer': '#ef4444',
+};
+
+const barColors = peers.map(p => {
+    if (p.ticker === selectedTicker) return '#4f46e5';
+    return (sectorColors[p.sector] || '#94a3b8') + 'aa';
+});
+
+new Chart(document.getElementById('peerChart'), {
+    type: 'bar',
+    data: {
+        labels: peers.map(p => p.ticker),
+        datasets: [{
+            data: peers.map(p => p.val),
+            backgroundColor: barColors,
+            borderWidth: 0,
+            borderRadius: 3,
+        }]
+    },
+    options: {
+        responsive: true,
+        plugins: {
+            legend: { display: false },
+            tooltip: {
+                callbacks: {
+                    title: ctx => {
+                        const p = peers[ctx[0].dataIndex];
+                        return `${p.name} (${p.ticker})`;
+                    },
+                    label: ctx => `${metricLabel}: ${ctx.parsed.y.toFixed(1)}${metricSuffix}`
+                }
+            },
+            annotation: {
+                annotations: {
+                    avgLine: {
+                        type: 'line',
+                        yMin: peerAvg,
+                        yMax: peerAvg,
+                        borderColor: '#ef4444',
+                        borderWidth: 2,
+                        borderDash: [6, 4],
+                        label: {
+                            display: true,
+                            content: `Avg: ${peerAvg.toFixed(1)}${metricSuffix}`,
+                            position: 'start',
+                            backgroundColor: '#ef444422',
+                            color: '#ef4444',
+                            font: { size: 11, weight: 'bold' },
+                            padding: 4,
+                        }
+                    },
+                    medianLine: {
+                        type: 'line',
+                        yMin: peerMedian,
+                        yMax: peerMedian,
+                        borderColor: '#6b7280',
+                        borderWidth: 1.5,
+                        borderDash: [4, 4],
+                        label: {
+                            display: true,
+                            content: `Median: ${peerMedian.toFixed(1)}${metricSuffix}`,
+                            position: 'end',
+                            backgroundColor: '#6b728022',
+                            color: '#6b7280',
+                            font: { size: 11 },
+                            padding: 4,
+                        }
+                    }
+                }
+            }
+        },
+        scales: {
+            x: {
+                ticks: {
+                    color: '#6b7280',
+                    font: { size: 11 },
+                },
+                grid: { display: false },
+            },
+            y: {
+                ticks: { color: '#6b7280', callback: v => v + metricSuffix },
+                grid: { color: '#e2e6ed' },
+                title: { display: true, text: metricLabel, color: '#6b7280' },
+            }
+        }
+    },
+    plugins: [{
+        // Bold the selected ticker label on the x-axis
+        afterDraw(chart) {
+            if (!selectedTicker) return;
+            const xAxis = chart.scales.x;
+            const ctx = chart.ctx;
+            const idx = peers.findIndex(p => p.ticker === selectedTicker);
+            if (idx < 0) return;
+            const tick = xAxis.getLabelForValue(idx);
+            const x = xAxis.getPixelForTick(idx);
+            const y = xAxis.bottom + 4;
+            ctx.save();
+            ctx.font = 'bold 12px -apple-system, sans-serif';
+            ctx.fillStyle = '#4f46e5';
+            ctx.textAlign = 'center';
+            // Draw a small indicator arrow above the bar
+            const meta = chart.getDatasetMeta(0);
+            const bar = meta.data[idx];
+            if (bar) {
+                ctx.fillText('\u25BC', bar.x, bar.y - 6);
+            }
+            ctx.restore();
+        }
+    }]
+});
+</script>
+{% endblock %}
