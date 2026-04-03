@@ -57,7 +57,6 @@
 {% endif %}
 
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-annotation@3.0.1/dist/chartjs-plugin-annotation.min.js"></script>
 <script>
 const peers = {{ peers_data | safe }};
 const selectedTicker = {{ ticker | tojson }};
@@ -118,46 +117,6 @@ new Chart(document.getElementById('peerChart'), {
                     label: ctx => `${metricLabel}: ${ctx.parsed.y.toFixed(1)}${metricSuffix}`
                 }
             },
-            annotation: {
-                annotations: {
-                    avgLine: {
-                        type: 'line',
-                        yMin: peerAvg,
-                        yMax: peerAvg,
-                        borderColor: '#ef4444',
-                        borderWidth: 2,
-                        borderDash: [6, 4],
-                        label: {
-                            display: true,
-                            content: `Avg: ${peerAvg.toFixed(1)}${metricSuffix}`,
-                            position: 'end',
-                            yAdjust: -12,
-                            backgroundColor: 'transparent',
-                            color: '#ef4444',
-                            font: { size: 11, weight: 'bold' },
-                            padding: 0,
-                        }
-                    },
-                    medianLine: {
-                        type: 'line',
-                        yMin: peerMedian,
-                        yMax: peerMedian,
-                        borderColor: '#6b7280',
-                        borderWidth: 1.5,
-                        borderDash: [4, 4],
-                        label: {
-                            display: true,
-                            content: `Median: ${peerMedian.toFixed(1)}${metricSuffix}`,
-                            position: 'end',
-                            yAdjust: -12,
-                            backgroundColor: 'transparent',
-                            color: '#6b7280',
-                            font: { size: 11 },
-                            padding: 0,
-                        }
-                    }
-                }
-            }
         },
         scales: {
             x: {
@@ -177,7 +136,11 @@ new Chart(document.getElementById('peerChart'), {
     plugins: [{
         afterDraw(chart) {
             const ctx = chart.ctx;
+            const yAxis = chart.scales.y;
+            const xAxis = chart.scales.x;
             const meta = chart.getDatasetMeta(0);
+
+            // Value labels on top of bars
             ctx.save();
             ctx.font = 'bold 11px -apple-system, sans-serif';
             ctx.fillStyle = '#374151';
@@ -189,25 +152,41 @@ new Chart(document.getElementById('peerChart'), {
             });
             ctx.restore();
 
+            // Draw avg line
+            function drawLine(value, color, width, dash, label) {
+                const y = yAxis.getPixelForValue(value);
+                ctx.save();
+                ctx.strokeStyle = color;
+                ctx.lineWidth = width;
+                ctx.setLineDash(dash);
+                ctx.beginPath();
+                ctx.moveTo(xAxis.left, y);
+                ctx.lineTo(xAxis.right, y);
+                ctx.stroke();
+                ctx.setLineDash([]);
+                // Label on right, above the line
+                ctx.font = 'bold 11px -apple-system, sans-serif';
+                ctx.fillStyle = color;
+                ctx.textAlign = 'right';
+                ctx.fillText(label, xAxis.right - 4, y - 6);
+                ctx.restore();
+            }
+            drawLine(peerAvg, '#ef4444', 2, [6, 4], `Avg: ${peerAvg.toFixed(1)}${metricSuffix}`);
+            drawLine(peerMedian, '#6b7280', 1.5, [4, 4], `Median: ${peerMedian.toFixed(1)}${metricSuffix}`);
+
             // Highlight selected ticker
             if (!selectedTicker) return;
-            const xAxis = chart.scales.x;
             const idx = peers.findIndex(p => p.ticker === selectedTicker);
             if (idx < 0) return;
-            const tick = xAxis.getLabelForValue(idx);
-            const x = xAxis.getPixelForTick(idx);
-            const y = xAxis.bottom + 4;
-            ctx.save();
-            ctx.font = 'bold 12px -apple-system, sans-serif';
-            ctx.fillStyle = '#4f46e5';
-            ctx.textAlign = 'center';
-            // Draw a small indicator arrow above the bar
-            const meta = chart.getDatasetMeta(0);
-            const bar = meta.data[idx];
-            if (bar) {
-                ctx.fillText('\u25BC', bar.x, bar.y - 6);
+            const selBar = meta.data[idx];
+            if (selBar) {
+                ctx.save();
+                ctx.font = 'bold 12px -apple-system, sans-serif';
+                ctx.fillStyle = '#4f46e5';
+                ctx.textAlign = 'center';
+                ctx.fillText('\u25BC', selBar.x, selBar.y - 18);
+                ctx.restore();
             }
-            ctx.restore();
         }
     }]
 });
